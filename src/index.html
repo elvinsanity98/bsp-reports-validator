@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="Eejay Gimena, IT Head, Rural Bank of Liloy (ZN), Inc.">
+<title>BSP Reports Validator</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <div>
+      <h1>BSP Reports Validator</h1>
+      <p class="tagline">Pre-check an FRP submission (<span id="report-name">FRP_S</span>) before you send it to the BSP.</p>
+    </div>
+    <p class="offline" title="The page makes no network requests. The file is read by your browser only.">
+      <span class="dot" aria-hidden="true"></span>Works offline. Your file stays on this computer.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card intake" aria-label="Choose a file">
+    <label class="drop" id="drop" for="file">
+      <input type="file" id="file" accept=".xml,.xlsx,.xlsm,.zip">
+      <span class="drop-title">Drop the submission file here, or click to choose</span>
+      <span class="drop-hint">.xml submission file &middot; .zip holding the .xml &middot; .xlsx BSP input template, filled in</span>
+    </label>
+
+    <div class="setup">
+      <fieldset class="setup-block">
+        <legend>Reporting period <small>used for the Excel template; an XML file carries its own</small></legend>
+        <div class="row">
+          <label class="field">Bank code (Undertaking)
+            <input type="text" id="h-undertaking" autocomplete="off" spellcheck="false" placeholder="as registered with the BSP">
+          </label>
+          <label class="field">Year
+            <input type="number" id="h-year" min="2000" max="2099" step="1">
+          </label>
+          <label class="field">Month
+            <select id="h-period"></select>
+          </label>
+        </div>
+      </fieldset>
+
+      <details class="setup-block" id="profile-box">
+        <summary>Bank profile <small id="profile-summary"></small></summary>
+        <p class="muted">The BSP looks these facts up in its own records. They decide which schedules are required and which rules apply.
+          Rules that need a fact left blank here are counted as &ldquo;not checked&rdquo;.</p>
+        <div class="row">
+          <label class="field">Bank type
+            <select id="p-group">
+              <option value="">Not set</option>
+              <option value="RB">Rural bank (RB)</option>
+              <option value="TB">Thrift bank (TB)</option>
+              <option value="UKB">Universal or commercial bank (UKB)</option>
+              <option value="DB">Digital bank (DB)</option>
+            </select>
+          </label>
+          <label class="field">Parent bank
+            <select id="p-parent">
+              <option value="NONE">None, or not a bank</option>
+              <option value="UKB">Universal or commercial bank</option>
+              <option value="DB">Digital bank</option>
+              <option value="TB">Thrift bank</option>
+              <option value="RB">Rural bank</option>
+            </select>
+          </label>
+          <label class="field">Banking offices <small>head office and branches</small>
+            <input type="number" id="p-branches" min="0" step="1" placeholder="not set">
+          </label>
+        </div>
+        <div class="row checks">
+          <label class="check"><input type="checkbox" id="p-domestic" checked><span>Domestic bank <small>not a branch of a foreign bank</small></span></label>
+          <label class="check"><input type="checkbox" id="p-trust"><span>Has trust authority <small>files the FRPTI schedules</small></span></label>
+          <label class="check"><input type="checkbox" id="p-emi"><span>E-money issuer <small>files the EMONEY schedules</small></span></label>
+        </div>
+        <label class="field wide">Branch list for the BRIS regional checks <small>optional; one office per line: branch code, region code, location code</small>
+          <textarea id="p-branch-list" rows="3" spellcheck="false" placeholder="001, 9, 4&#10;002, 9, 4"></textarea>
+        </label>
+        <p class="muted" id="branch-help"></p>
+      </details>
+
+      <details class="setup-block" id="history-box">
+        <summary>Earlier periods <small id="history-summary">none loaded</small></summary>
+        <p class="muted">Some rules compare this period with an earlier one (last month, last quarter, last year, the last three year-ends).
+          Add those submissions here, as XML, and the rules run; without them they are counted as &ldquo;not checked&rdquo;.</p>
+        <div class="row">
+          <label class="btn file-btn">Add earlier files<input type="file" id="history-file" accept=".xml" multiple></label>
+          <button class="btn" id="history-clear" type="button" hidden>Remove all</button>
+        </div>
+        <ul class="plain" id="history-list"></ul>
+      </details>
+    </div>
+
+    <div class="progress" id="progress" hidden>
+      <div class="bar"><div class="bar-fill" id="bar"></div></div>
+      <span id="progress-text">Reading...</span>
+    </div>
+    <p class="fail" id="fail" role="alert" hidden></p>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" id="tab-results" aria-controls="panel-results" aria-selected="true">Results</button>
+    <button role="tab" id="tab-schedules" aria-controls="panel-schedules" aria-selected="false">Schedules</button>
+    <button role="tab" id="tab-rules" aria-controls="panel-rules" aria-selected="false">What is checked</button>
+  </nav>
+
+  <section id="panel-results" role="tabpanel" aria-labelledby="tab-results">
+    <div class="empty" id="empty">
+      <p><strong>No file checked yet.</strong></p>
+      <p>The validator checks that the file follows the BSP schema, works out the totals the BSP calculates,
+        and then runs every rule of the BSP specification: required schedules, cell-level checks and cross-schedule reconciliations.</p>
+    </div>
+    <div id="results" hidden></div>
+  </section>
+
+  <section id="panel-schedules" role="tabpanel" aria-labelledby="tab-schedules" hidden>
+    <div class="empty" id="schedules-empty">
+      <p><strong>No file checked yet.</strong></p>
+      <p>After a check, this tab shows each schedule as the BSP will see it: your figures plus the totals it calculates.</p>
+    </div>
+    <div id="schedules" hidden>
+      <div class="toolbar">
+        <label class="field grow">Schedule
+          <select id="schedule-pick"></select>
+        </label>
+        <label class="check inline"><input type="checkbox" id="schedule-filled" checked><span>Hide rows with no amounts</span></label>
+      </div>
+      <div id="schedule-view"></div>
+    </div>
+  </section>
+
+  <section id="panel-rules" role="tabpanel" aria-labelledby="tab-rules" hidden>
+    <p class="lead">Everything checked here comes from two files the BSP publishes for the report: the XML schema (XSD) and the
+      specification workbook with its &ldquo;Assertions&rdquo; sheet. Finding codes are the BSP&rsquo;s own rule codes, so they match
+      what the BSP portal reports back.</p>
+    <div class="table-scroll">
+      <table class="grid" id="rule-grid">
+        <thead><tr><th style="width:11rem">Codes</th><th style="width:7rem">Count</th><th>What they check</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="note">
+      <h3>What this tool cannot see</h3>
+      <ul>
+        <li>The BSP&rsquo;s reference data about your bank. Enter the facts under <em>Bank profile</em>; anything left blank turns the rules that need it into &ldquo;not checked&rdquo;.</li>
+        <li>Your earlier submissions as stored at the BSP. Add the earlier files under <em>Earlier periods</em> to run the period-on-period rules.</li>
+        <li>Cells marked &ldquo;not used in this report&rdquo; are reported as warnings, because the published files do not say whether the BSP rejects or ignores a value there.</li>
+        <li>An empty sheet in the Excel template is treated as a schedule that was not submitted.</li>
+      </ul>
+    </div>
+    <div class="toolbar" style="margin-top:18px">
+      <label class="field grow">Look up a rule
+        <input type="search" id="rule-search" placeholder="Rule code, schedule or words, e.g. RIN-AAS3-272, FRP_BS, deposit">
+      </label>
+    </div>
+    <div class="table-scroll">
+      <table class="grid" id="rule-search-grid">
+        <thead><tr><th style="width:17rem">Rule</th><th style="width:6rem">Severity</th><th>Message and formula</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  <p class="credit">Developed by <strong>Eejay Gimena</strong> &middot; IT Head &middot; Rural Bank of Liloy (ZN), Inc.</p>
+  <p>Unofficial helper, not affiliated with the Bangko Sentral ng Pilipinas. It does not replace the BSP&rsquo;s own validation;
+    a file that passes here can still be rejected. Rules: <span id="spec-source"></span>.</p>
+</footer>
+
+<script src="spec-data.js"></script>
+<script src="xml.js"></script>
+<script src="formula.js"></script>
+<script src="spec.js"></script>
+<script src="engine.js"></script>
+<script src="template.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

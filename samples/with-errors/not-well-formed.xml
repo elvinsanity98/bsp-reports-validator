@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FRP_S xmlns="http://bsp.gov.ph/xml/FRP_S/15.0">
+  <Header>
+    <Undertaking>RB0001</Undertaking>
+    <Year>2026</Year>
+    <Period>2</Period>
+  </Header>
+  <MICRO_MBS/>
+  <MLR_II>
+    <MAIN>
+      <R0010C0010>850000.00</R0010C0010>
+      <R0020C0010>120000.50</R0020C0010>
+      <R0100C0010>300000.00</R0100C0010>
+    </MAIN>
+  </MLR_2>
+  <MLR_III>
+    <MAIN>
+      <R0010C0010>2400000.00</R0010C0010>
+      <R0070C0010>3100000.00</R0070C0010>
+    </MAIN>
+  </MLR_III>
+</FRP_S>
