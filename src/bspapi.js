@@ -62,6 +62,17 @@ function describe(text, knownReports) {
   return out;
 }
 
+// The submission token out of the BSP's answer. Its OpenAPI file promises
+// { "token": "..." }; the server actually answers with the token alone, as a
+// JSON string. Both are read.
+function tokenFrom(text) {
+  let v = text;
+  try { v = JSON.parse(text); } catch (e) { v = text; }
+  if (v && typeof v === 'object') v = v.token || v.Token || v.submissionToken;
+  v = String(v || '').trim();
+  return UUID.test(v) ? v : null;
+}
+
 // ---- transport -----------------------------------------------------------------
 
 function multipart(fields, files) {
@@ -166,9 +177,8 @@ function createClient(options) {
       .concat(extras.map((x, i) => ({ field: 'file' + (i + 1), name: x.name, data: x.data, type: typeOf(x.name) })));
     const form = multipart({ reportInfo: JSON.stringify(reportInfo, null, 1) }, files);
     const res = check(await call('POST', base() + '/submitReport', { 'Content-Type': form.contentType, 'Content-Length': form.body.length }, form.body), 'the submission');
-    let token = null;
-    try { token = JSON.parse(res.body.toString('utf8')).token; } catch (e) { token = null; }
-    if (!UUID.test(String(token))) throw new Error('The BSP accepted the call but sent no submission token: ' + res.body.toString('utf8').slice(0, 200));
+    const token = tokenFrom(res.body.toString('utf8'));
+    if (!token) throw new Error('The BSP accepted the call but sent no submission token: ' + res.body.toString('utf8').slice(0, 200));
     return { token, reportInfo };
   };
 
@@ -258,4 +268,4 @@ async function missingIntermediates(host, port, extraCa) {
   return found;
 }
 
-module.exports = { createClient, describe, multipart, explain, missingIntermediates, DOWNLOADS, HOST, UUID };
+module.exports = { createClient, describe, multipart, explain, missingIntermediates, tokenFrom, DOWNLOADS, HOST, UUID };

@@ -293,6 +293,7 @@ table.grid { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .send-log { margin-top: 12px; }
 .send-log p { margin-top: 4px; overflow-wrap: anywhere; }
 .send-log .fail { margin-top: 8px; }
+.send-log .rawstatus { font-family: var(--mono); font-size: .78rem; }
 
 /* ---- schedule viewer ---- */
 .sched-head { margin: 4px 0 12px; }
@@ -3477,6 +3478,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
           files.appendChild(h('a', { class: 'btn small linkbtn', href: '/local/file?token=' + entry.token + '&mode=' + entry.mode + '&kind=' + k[0] + '&k=' + local.key }, k[1]));
         });
         if (files.children.length) logBox.appendChild(files);
+        logBox.appendChild(h('p', { class: 'muted rawstatus' }, 'BSP answer: ' + JSON.stringify(st)));
         if (r.settled) return;
         if (Date.now() - started > 15 * 60000) { logBox.appendChild(h('p', { class: 'muted' }, 'Still processing. Use "Check" in the list below later.')); return; }
         logBox.appendChild(h('p', { class: 'muted' }, 'The BSP is still processing. Checking again every 5 seconds.'));

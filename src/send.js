@@ -66,6 +66,7 @@
           files.appendChild(h('a', { class: 'btn small linkbtn', href: '/local/file?token=' + entry.token + '&mode=' + entry.mode + '&kind=' + k[0] + '&k=' + local.key }, k[1]));
         });
         if (files.children.length) logBox.appendChild(files);
+        logBox.appendChild(h('p', { class: 'muted rawstatus' }, 'BSP answer: ' + JSON.stringify(st)));
         if (r.settled) return;
         if (Date.now() - started > 15 * 60000) { logBox.appendChild(h('p', { class: 'muted' }, 'Still processing. Use "Check" in the list below later.')); return; }
         logBox.appendChild(h('p', { class: 'muted' }, 'The BSP is still processing. Checking again every 5 seconds.'));

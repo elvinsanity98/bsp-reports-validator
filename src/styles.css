@@ -285,6 +285,7 @@ table.grid { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .send-log { margin-top: 12px; }
 .send-log p { margin-top: 4px; overflow-wrap: anywhere; }
 .send-log .fail { margin-top: 8px; }
+.send-log .rawstatus { font-family: var(--mono); font-size: .78rem; }
 
 /* ---- schedule viewer ---- */
 .sched-head { margin: 4px 0 12px; }

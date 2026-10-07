@@ -156,9 +156,12 @@ A file for a report this tool has no rules for can be sent too; give `--period`,
 
 ### Not yet proven
 
-The sender follows the BSP's OpenAPI file, Postman collections and implementation guide, and is tested against the stand-in server only.
-It has not been run against the BSP itself, because that needs the bank's certificate password. Start with `node submit.js cert`, then a sandbox run.
-Two things to watch on the first real use: the status texts the BSP returns (the tool waits until a result file is available or the status reads as final), and the form field name for additional files (`additionalFiles`, as in the BSP's Postman collection; its OpenAPI file spells it `aditionalFiles`).
+The sender follows the BSP's OpenAPI file, Postman collections and implementation guide, and its tests run against the stand-in server.
+Against the BSP itself, so far: the certificate check and a sandbox submission were accepted. The BSP answers a submission with the token alone
+(a JSON string), not the `{ "token": ... }` object its OpenAPI file describes; the tool reads both.
+Still to be seen on real use: the status texts the BSP returns (the tool waits until a result file is available or the status reads `Valid` or `Invalid`,
+and the page shows the BSP's raw status answer), the result downloads, a real submission, and the form field name for additional files
+(`additionalFiles`, as in the BSP's Postman collection; its OpenAPI file spells it `aditionalFiles`).
 
 ## How far it agrees with the BSP
 

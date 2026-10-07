@@ -45,6 +45,16 @@ module.exports = function (test) {
     assert.deepStrictEqual([...parts[2].data], [0, 255, 13, 10]);
   });
 
+  test('api: the token is read from either shape of answer', () => {
+    const t = 'e5b959f0-2c7e-4969-bd75-b574ff29433e';
+    assert.strictEqual(API.tokenFrom('"' + t + '"'), t, 'what the BSP sends');
+    assert.strictEqual(API.tokenFrom('{"token":"' + t + '"}'), t, 'what its OpenAPI file describes');
+    assert.strictEqual(API.tokenFrom(t + '\n'), t);
+    assert.strictEqual(API.tokenFrom('{"token":null}'), null);
+    assert.strictEqual(API.tokenFrom('"accepted"'), null);
+    assert.strictEqual(API.tokenFrom(''), null);
+  });
+
   test('api: submit, status, downloads and refusals', async () => {
     const bsp = await mock.start(null);
     try {

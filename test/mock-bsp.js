@@ -66,7 +66,7 @@ function start(tlsOptions) {
         const token = crypto.randomUUID();
         submissions[token] = { mode, info, files, asked: 0, valid: !/INVALID/.test(main.data.toString('utf8')) };
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ token }));
+        res.end(JSON.stringify(token));       // the real server sends the token alone, not { token }
         return;
       }
       const t = /^([0-9a-f-]{36})\/(.+)$/.exec(m[2]);
