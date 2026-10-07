@@ -1,2 +1,3 @@
 # Keep LF everywhere so index.html matches a fresh build on any machine.
 * text=auto eol=lf
+*.cmd text eol=crlf

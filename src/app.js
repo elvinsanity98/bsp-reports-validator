@@ -412,6 +412,8 @@
         ['Not checked', st.skippedTotal]
       ]), h('p', { class: 'card-foot' }, 'Checked as: ' + profileSummary() + '.'))));
 
+    if (B.send) B.send.render(box, { input: state.input, result: r, spec: state.spec });
+
     if (!r.findings.length) {
       renderSchedules();
       return;
@@ -837,5 +839,5 @@
   init().catch(function (e) { fail(e && e.message ? e.message : String(e)); });
 
   // For the test page and for debugging in the console.
-  B.app = { state: state, run: run, chooseFile: chooseFile, useReport: useReport };
+  B.app = { state: state, run: run, chooseFile: chooseFile, useReport: useReport, h: h, clear: clear };
 })();

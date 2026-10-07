@@ -481,6 +481,10 @@ test('value formats: decimals count the value unless a pattern says how to write
   assert.ok(/more than 2 decimal/.test(ENGINE.checkValue(amount, '98358232.8399999').err));
 });
 
+// ---- sending to the BSP (against a stand-in server) ------------------------------
+
+require('./api.js')(test);
+
 // ---- repository hygiene --------------------------------------------------------
 
 test('source files are plain ASCII (no invisible characters)', () => {

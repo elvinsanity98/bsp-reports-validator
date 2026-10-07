@@ -149,6 +149,8 @@
         <li>Your earlier submissions as stored at the BSP. Add the earlier files under <em>Earlier periods</em> to run the period-on-period rules.</li>
         <li><code>CHECK-</code> findings are this tool&rsquo;s own sanity checks. They are not BSP rules and are always warnings.</li>
         <li>An empty sheet in the Excel template is treated as a schedule that was not submitted.</li>
+        <li>This page cannot send a file to the BSP by itself. Run <code>node submit.js ui</code> on your PC to get the same page with
+          &ldquo;Send to sandbox&rdquo; and &ldquo;Submit to the BSP&rdquo; buttons; that program holds the bank&rsquo;s certificate.</li>
       </ul>
     </div>
     <div class="toolbar" style="margin-top:18px">
@@ -179,5 +181,6 @@
 <script src="engine.js"></script>
 <script src="template.js"></script>
 <script src="app.js"></script>
+<script src="send.js"></script>
 </body>
 </html>

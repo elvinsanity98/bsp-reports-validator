@@ -96,6 +96,70 @@ node cli.js samples/with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml --bank RB
 
 `samples/README.txt` lists the sample files and the profile they assume. All figures in them are made up.
 
+## Sending a file to the BSP
+
+`submit.js` sends a report through the BSP's machine-to-machine API ("Engine API M2M"), the alternative to uploading it on the submission portal.
+It needs Node.js 18 or later on the PC and the bank's client certificate as a `.pfx` file. The hosted page cannot do this: a browser page cannot present the bank's certificate.
+
+| | |
+| --- | --- |
+| **Sandbox** | The BSP validates the file and returns its findings. Nothing is filed. |
+| **Submit** | The real submission. It asks you to type the period before anything is sent. |
+
+### With the page
+
+Double-click `Send-to-BSP.cmd` (or run `node submit.js ui`). The first time it asks where the `.pfx` file is; every time it asks for the certificate's password.
+It then opens the validator at `http://127.0.0.1:8777/` with a **Send to the BSP** panel under the results:
+
+1. Open the `.xml` file. It is checked as usual, and report code, bank code and period are filled in from it.
+2. **Send to sandbox**. The panel shows the BSP's validation status and offers its result as PDF, XML and Excel.
+3. **Submit to the BSP...**, type the period, **Submit for real**. If this tool found errors, you must tick a box to submit anyway.
+
+Keep the black window open while you work; closing it stops the page. A list of what was sent from this PC stays under the panel, so a result can be fetched again later.
+
+### From the command line
+
+```
+node submit.js setup --pfx "<path to the .pfx>"      one time
+node submit.js cert                                  does the BSP accept the certificate?
+node submit.js sandbox <file.xml>                    trial run
+node submit.js submit  <file.xml>                    real submission, after typing the period
+node submit.js status  <token>
+node submit.js result  <token> [--kind pdf|xml|json|excel|receipt|all]
+node submit.js history
+
+  --attach FILE     an additional file to send along (repeatable)
+  --period P        the period as the BSP writes it: 2026-03 for a month, 2026-09-18_09-24 for a week
+  --report CODE  --code BANKCODE    when they cannot be read off the file
+  --out DIR         where the BSP's answers are saved (default: next to the file)
+  --no-wait         do not wait for the validation
+  --force           submit for real although this tool found errors
+```
+
+`sandbox` and `submit` wait for the BSP and save its answers next to the file, named like the portal's own:
+`SandboxProcessingResult-<bank>-<report>-<period>-<token>.pdf`, `ProcessingResult-...pdf`, `Receipt-...pdf`.
+Exit code 0 = accepted as valid, 1 = the BSP found the file invalid, 2 = not sent or could not run.
+
+A file for a report this tool has no rules for can be sent too; give `--period`, because the file does not say whether its period is a month (`2026-03`) or a quarter (`2026-1`).
+
+### What it does with the certificate
+
+- The `.pfx` is read where it is. It is never copied, and `.gitignore` keeps certificate and key files out of this repository.
+- The password is asked for on each run and held in memory only. (`BSP_PFX_PASSWORD` in the environment is used instead when set. That suits a scheduled job, but any program running under the same Windows account can read it.)
+- The setting file, the list of submissions and downloaded results are kept in `%APPDATA%\bsp-reports-validator`.
+- The page server listens on this PC only (`127.0.0.1`), and only the page it handed out can use it: every call carries a key made at start-up, and calls from other sites are refused.
+- The BSP's server sends its certificate without the intermediate that signed it. Like a browser, the tool downloads that intermediate from the address named in the certificate; the chain must still end at a root certificate Node already trusts.
+
+### Trying it without the BSP
+
+`node tools/demo-send.js` starts a stand-in server on the PC with throwaway test certificates and opens the page against it. Sandbox and "real" submissions both go to the stand-in. It needs OpenSSL, which Git for Windows includes.
+
+### Not yet proven
+
+The sender follows the BSP's OpenAPI file, Postman collections and implementation guide, and is tested against the stand-in server only.
+It has not been run against the BSP itself, because that needs the bank's certificate password. Start with `node submit.js cert`, then a sandbox run.
+Two things to watch on the first real use: the status texts the BSP returns (the tool waits until a result file is available or the status reads as final), and the form field name for additional files (`additionalFiles`, as in the BSP's Postman collection; its OpenAPI file spells it `aditionalFiles`).
+
 ## How far it agrees with the BSP
 
 The tool was compared with the BSP's own processing results for the past submissions of one rural bank. Those files and results are not part of this repository.
@@ -159,8 +223,11 @@ src/formula.js        parser for the BSP formula language
 src/engine.js         schema checks, calculated totals, rule evaluation
 src/template.js       reads the Excel input template
 src/app.js            the page
+src/send.js           the page's "Send to the BSP" panel (active only under submit.js ui)
+src/bspapi.js         client for the BSP's API (Node only)
+submit.js             command line sender and the local page server
 tools/build.js        bundles src/ into index.html
-test/run.js           tests
+test/run.js           tests; test/mock-bsp.js is the stand-in BSP they send to
 ```
 
 Edit `src/`, then run `node tools/build.js` and `node test/run.js`. Commit the rebuilt `index.html` with the source change.
