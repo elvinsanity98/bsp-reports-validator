@@ -10,9 +10,10 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 // forms: { FRP_1: { MAIN: { R0020C0010: 100 }, LIST: [{ C0010: 'x' }], '@Field': 1 } }
 // A schedule mapped to {} is written as an empty element.
 function buildXml(spec, opts) {
-  const o = Object.assign({ undertaking: 'RB0001', year: 2026, period: 3, forms: {} }, opts);
-  const out = ['<?xml version="1.0" encoding="utf-8"?>', `<${spec.root} xmlns="${spec.ns}">`,
-    '  <Header>', `    <Undertaking>${esc(o.undertaking)}</Undertaking>`, `    <Year>${o.year}</Year>`, `    <Period>${o.period}</Period>`, '  </Header>'];
+  const o = Object.assign({ undertaking: 'RB0001', year: 2026, period: 3, from: '2026-09-18', to: '2026-09-24', forms: {} }, opts);
+  const header = { Undertaking: o.undertaking, Year: o.year, Period: o.period, FromDate: o.from, ToDate: o.to };
+  const out = ['<?xml version="1.0" encoding="utf-8"?>', `<${spec.root} xmlns="${spec.ns}">`, '  <Header>',
+    ...spec.header.map((h) => `    <${h[0]}>${esc(header[h[0]])}</${h[0]}>`), '  </Header>'];
   const cells = (obj, pad) => Object.keys(obj).map((c) => `${pad}<${c}>${esc(obj[c])}</${c}>`);
   for (const form of spec.forms) {
     const data = o.forms[form.n];

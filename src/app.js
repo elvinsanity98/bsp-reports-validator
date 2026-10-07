@@ -30,7 +30,8 @@
   var PAGE = 60;
 
   var state = {
-    spec: null,
+    spec: null,         // the report definition in use
+    header: {},         // report -> values typed into the reporting period fields
     input: null,        // { name, bytes }
     result: null,
     history: {},        // 'YYYY-MM' -> { doc, name }
@@ -44,12 +45,15 @@
 
   // ---- setup fields ----------------------------------------------------------
 
-  var PROFILE_KEY = 'bspv.profile.v1';
+  var SETUP_KEY = 'bspv.profile.v1';
+  var saved = {};
 
   function saveSetup() {
+    var u = $('h-Undertaking');
+    if (u) saved.undertaking = u.value;
     try {
-      localStorage.setItem(PROFILE_KEY, JSON.stringify({
-        undertaking: $('h-undertaking').value, group: $('p-group').value, parent: $('p-parent').value,
+      localStorage.setItem(SETUP_KEY, JSON.stringify({
+        report: $('report').value, undertaking: saved.undertaking || '', group: $('p-group').value, parent: $('p-parent').value,
         branches: $('p-branches').value, domestic: $('p-domestic').checked, trust: $('p-trust').checked,
         emi: $('p-emi').checked, list: $('p-branch-list').value
       }));
@@ -57,17 +61,97 @@
   }
 
   function loadSetup() {
-    var s = null;
-    try { s = JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null'); } catch (e) { s = null; }
-    if (!s) return;
-    $('h-undertaking').value = s.undertaking || '';
-    $('p-group').value = s.group || '';
-    $('p-parent').value = s.parent || 'NONE';
-    $('p-branches').value = s.branches || '';
-    $('p-domestic').checked = s.domestic !== false;
-    $('p-trust').checked = !!s.trust;
-    $('p-emi').checked = !!s.emi;
-    $('p-branch-list').value = s.list || '';
+    try { saved = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null') || {}; } catch (e) { saved = {}; }
+    if (saved.group === undefined) return;
+    $('p-group').value = saved.group || '';
+    $('p-parent').value = saved.parent || 'NONE';
+    $('p-branches').value = saved.branches || '';
+    $('p-domestic').checked = saved.domestic !== false;
+    $('p-trust').checked = !!saved.trust;
+    $('p-emi').checked = !!saved.emi;
+    $('p-branch-list').value = saved.list || '';
+  }
+
+  // ---- report and reporting period -------------------------------------------
+
+  function iso(d) {
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+
+  function headerDefault(name) {
+    var now = new Date();
+    if (name === 'Undertaking') return saved.undertaking || '';
+    if (name === 'Year' || name === 'Period') {
+      var last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      return String(name === 'Year' ? last.getFullYear() : last.getMonth() + 1);
+    }
+    if (name === 'FromDate' || name === 'ToDate') {
+      // the latest Friday-to-Thursday week that has ended
+      var back = (now.getDay() - 4 + 7) % 7 || 7;
+      var thursday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+      return iso(name === 'ToDate' ? thursday : new Date(thursday.getFullYear(), thursday.getMonth(), thursday.getDate() - 6));
+    }
+    return '';
+  }
+
+  var HEADER_LABELS = { Undertaking: 'Bank code (Undertaking)', Period: 'Month', FromDate: 'From date', ToDate: 'To date' };
+
+  function renderHeaderFields() {
+    var box = clear($('header-fields')), spec = state.spec;
+    var keep = state.header[spec.report] = state.header[spec.report] || {};
+    spec.header.forEach(function (hd) {
+      var name = hd[0], type = spec.types[hd[1]], id = 'h-' + name, input;
+      if (name === 'Period') {
+        input = h('select', { id: id });
+        MONTHS.forEach(function (m, i) { input.appendChild(h('option', { value: String(i + 1) }, (i + 1) + ' - ' + m)); });
+      } else if (type.b === 'D') {
+        input = h('input', { type: 'date', id: id });
+      } else if (type.b === 'i') {
+        input = h('input', { type: 'number', id: id, min: type.min, max: type.max, step: '1' });
+      } else {
+        input = h('input', { type: 'text', id: id, autocomplete: 'off', spellcheck: 'false', placeholder: name === 'Undertaking' ? 'as registered with the BSP' : null });
+      }
+      input.value = keep[name] !== undefined ? keep[name] : headerDefault(name);
+      input.addEventListener('change', function () { keep[name] = input.value; saveSetup(); run(); });
+      box.appendChild(h('label', { class: 'field' }, HEADER_LABELS[name] || name, input));
+    });
+  }
+
+  function headerValues() {
+    var out = {};
+    state.spec.header.forEach(function (hd) { var el = $('h-' + hd[0]); out[hd[0]] = el ? el.value : ''; });
+    return out;
+  }
+
+  // Switches the page to one report: its header fields, the bank facts its
+  // rules use, and its rule list.
+  async function useReport(report) {
+    var spec = await SPEC.load(report);
+    if (state.spec && state.spec.report !== report) state.history = {};
+    state.spec = spec;
+    $('report').value = report;
+    renderHeaderFields();
+    var needs = spec.needs, any = false;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-need]'), function (el) {
+      var on = el.getAttribute('data-need').split(' ').some(function (k) { return k === '@branches' ? needs.branches : needs.bank[k]; });
+      el.hidden = !on;
+      any = any || on;
+    });
+    $('profile-box').hidden = !any;
+    $('history-box').hidden = !needs.history;
+    $('profile-summary').textContent = profileSummary();
+    if (needs.branches) {
+      // region codes, read off the BSP's own regional rules
+      var regions = {};
+      spec.rules.forEach(function (r) {
+        var m = /^RIN-B1560[- ](.+)$/.exec(r[0]), c = /="(\d+)"/.exec(r[4]);
+        if (m && c) regions[c[1]] = m[1];
+      });
+      var regionText = Object.keys(regions).sort(function (a, b) { return a - b; }).map(function (k) { return k + ' = ' + regions[k]; }).join(', ');
+      $('branch-help').textContent = 'Region codes used by the rules: ' + regionText + '. Location codes: 1 = NCR, 2 = Luzon outside NCR, 3 = Visayas, 4 = Mindanao, 5 = foreign office.';
+    }
+    renderHistory();
+    renderRules();
   }
 
   // The facts the BSP holds about the bank, as the rules ask for them.
@@ -96,13 +180,14 @@
 
   function profileSummary() {
     var p = profile(), b = p.bank, bits = [];
-    bits.push(b.BNKGRP ? $('p-group').selectedOptions[0].textContent : 'bank type not set');
-    if (b.A_TRUST) bits.push('trust');
-    if (b.A_EMI) bits.push('e-money');
-    if (!b.ISDOMESTIC) bits.push('foreign bank branch');
-    if (b.BRANCHCOUNT !== undefined) bits.push(b.BRANCHCOUNT + ' offices');
-    if (p.branches) bits.push(Object.keys(p.branches).length + ' in branch list');
-    return bits.join(', ');
+    var needs = state.spec ? state.spec.needs : { bank: {} };
+    if (needs.bank.BNKGRP) bits.push(b.BNKGRP ? $('p-group').selectedOptions[0].textContent : 'bank type not set');
+    if (needs.bank.A_TRUST && b.A_TRUST) bits.push('trust');
+    if (needs.bank.A_EMI && b.A_EMI) bits.push('e-money');
+    if (needs.bank.ISDOMESTIC && !b.ISDOMESTIC) bits.push('foreign bank branch');
+    if (needs.bank.BRANCHCOUNT && b.BRANCHCOUNT !== undefined) bits.push(b.BRANCHCOUNT + ' offices');
+    if (needs.branches && p.branches) bits.push(Object.keys(p.branches).length + ' in branch list');
+    return bits.join(', ') || 'no bank facts needed';
   }
 
   // ---- reading the chosen file -----------------------------------------------
@@ -125,19 +210,25 @@
   }
 
   async function toDoc(input) {
-    var kind = kindOf(input.name);
+    var kind = kindOf(input.name), found;
     if (kind === 'xlsx') {
-      return TEMPLATE.read(input.bytes, state.spec, {
-        Undertaking: $('h-undertaking').value, Year: $('h-year').value, Period: $('h-period').value
-      });
+      var book = await TEMPLATE.readWorkbook(input.bytes);
+      found = SPEC.detectSheets(book.sheets.map(function (sh) { return sh.name; }));
+      if (found && found !== state.spec.report) await useReport(found);
+      return TEMPLATE.readTemplate(book, state.spec, headerValues());
     }
     if (kind === 'zip') {
       var zip = TEMPLATE.unzip(input.bytes);
       var xmls = zip.names.filter(function (n) { return /\.xml$/i.test(n) && !/^__MACOSX\//.test(n); });
       if (xmls.length !== 1) throw new Error(xmls.length ? 'The zip holds ' + xmls.length + ' XML files; it should hold exactly one.' : 'The zip holds no .xml file.');
       input.inner = xmls[0];
-      return ENGINE.readXml(await zip.read(xmls[0]), state.spec);
+      var text = await zip.read(xmls[0]);
+      found = SPEC.detectXmlText(text);
+      if (found && found !== state.spec.report) await useReport(found);
+      return ENGINE.readXml(text, state.spec);
     }
+    found = SPEC.detectXmlText(ENGINE.decode(input.bytes).text);
+    if (found && found !== state.spec.report) await useReport(found);
     return ENGINE.readXmlBytes(input.bytes, state.spec);
   }
 
@@ -156,6 +247,7 @@
       state.open = {};
       state.shown = {};
       render();
+      saveSetup();
     } catch (e) {
       state.result = null;
       $('results').hidden = true;
@@ -209,14 +301,17 @@
   }
 
   function periodText(doc) {
-    var y = doc.header.Year, p = doc.header.Period;
-    if (!y || !p || y.bad || p.bad) return 'not readable';
-    return MONTHS[p.v - 1] + ' ' + y.v;
+    var hd = doc.header, y = hd.Year, p = hd.Period, from = hd.FromDate, to = hd.ToDate;
+    if (y && p && !y.bad && !p.bad) return MONTHS[p.v - 1] + ' ' + y.v;
+    if (from && to && !from.bad && !to.bad) return from.v + ' to ' + to.v;
+    return 'not readable';
   }
 
   function familyOf(f) {
-    if (f.kind !== 'rule') return f.code.split('-')[0] === 'SPEC' ? 'Cells not used in this report' : 'File and schema';
     var fam = f.code.split('-')[0];
+    if (fam === 'COND') return 'Conditional cells (COND)';
+    if (fam === 'CHECK') return 'Sanity checks of this tool (CHECK)';
+    if (f.kind !== 'rule') return 'File and schema';
     return { REQ: 'Required schedules (REQ)', XREQ: 'Branch coverage (XREQ)', STG1: 'Cell checks (STG1)', RIN: 'Reconciliations (RIN)' }[fam] || fam;
   }
 
@@ -282,6 +377,10 @@
       box.appendChild(h('p', { class: 'notice' }, h('strong', null, st.skippedTotal.toLocaleString('en-US') + ' rules were not checked: '),
         parts.join('; ') + '. See Bank profile and Earlier periods above.'));
     }
+    if (st.cellsNotChecked) {
+      box.appendChild(h('p', { class: 'notice' }, h('strong', null, st.cellsNotChecked.toLocaleString('en-US') + ' conditional cell(s) were not checked: '),
+        'whether they may hold a value depends on ' + Object.keys(st.cellsNotCheckedWhy).join(', ') + '. Set it under Bank profile.'));
+    }
     if (r.profile.badLines) {
       box.appendChild(h('p', { class: 'notice' }, r.profile.badLines + ' line(s) of the branch list could not be read. Each line needs a branch code and a region code, separated by a comma.'));
     }
@@ -303,7 +402,7 @@
         ['Warnings', c.warning],
         null,
         ['File and schema', fileCount],
-        ['Cells not used in this report', naCount],
+        ['Conditional cells', naCount],
         ['BSP rules', ruleCount]
       ])),
       h('div', { class: 'card' }, h('h3', null, 'BSP rules (' + st.rules.toLocaleString('en-US') + ')'), kv([
@@ -631,22 +730,29 @@
   // ---- "what is checked" -----------------------------------------------------
 
   var FAMILIES = [
-    ['XML-, XSD-', 'File and schema: the file is well-formed XML, uses the right namespace, has a Header, holds only schedules, tables and cells the schema knows, has no totals the BSP calculates itself, and every value fits its format (amounts with 2 decimals, whole numbers, codes, dates, text lengths).'],
+    ['XML-, XSD-', 'File and schema: the file is well-formed XML, uses the right namespace, has a complete Header, holds every schedule the schema requires and only schedules, tables and cells it knows, has no totals the BSP calculates itself, and every value fits its format (amounts with 2 decimals, whole numbers, codes, dates, text lengths). The BSP reports these as XSD-0001.'],
     ['TPL-', 'Excel template: values typed into calculated cells, Excel error values, entries with no name, sheets that are not schedules.'],
-    ['SPEC-NOT-APPLICABLE', 'A cell holds a value although the specification says the cell is not used in this report. Reported as a warning.'],
+    ['COND-0001', 'A value in a conditional cell while its condition is false, for example a column this report does not use or a line meant for another type of bank. The BSP rejects it with the same code.'],
     ['REQ-', 'Schedules that must be submitted for the period and bank type, and schedules that must not be.'],
-    ['STG1-', 'Checks on single cells and pairs of cells: amounts that cannot be negative, US$ and peso-equivalent columns filled together, deposit size brackets, interest rate limits.'],
+    ['STG1-', 'Checks on single cells and groups of cells: amounts that cannot be negative, columns that must be filled together, a name given for every "others" line that has an amount.'],
     ['RIN-', 'Reconciliations inside a schedule and between schedules (for example a schedule total against the balance sheet), each with its own tolerance.'],
-    ['XREQ-', 'Branch schedules: every banking office reported, and reported once.']
+    ['XREQ-', 'Branch schedules: every banking office reported, and reported once.'],
+    ['CHECK-', 'Sanity checks of this tool, such as a report week that does not run Friday to Thursday. They are not BSP rules and are always warnings.']
   ];
 
   function renderRules() {
     var spec = state.spec, counts = {};
     spec.rules.forEach(function (r) { var k = r[0].split('-')[0] + '-'; counts[k] = (counts[k] || 0) + 1; });
-    var body = $('rule-grid').tBodies[0];
+    var body = clear($('rule-grid').tBodies[0]);
     FAMILIES.forEach(function (f) {
-      body.appendChild(h('tr', null, h('td', { class: 'value' }, f[0]), h('td', { class: 'line' }, counts[f[0]] ? counts[f[0]].toLocaleString('en-US') : 'built in'), h('td', null, f[1])));
+      var isRule = /^(REQ|STG1|RIN|XREQ)-$/.test(f[0]);
+      if (isRule && !counts[f[0]]) return;
+      if (f[0] === 'COND-0001' && !spec.conds.length) return;
+      if (f[0] === 'CHECK-' && !spec.header.some(function (hd) { return hd[0] === 'FromDate'; })) return;
+      body.appendChild(h('tr', null, h('td', { class: 'value' }, f[0]),
+        h('td', { class: 'line' }, isRule ? counts[f[0]].toLocaleString('en-US') : f[0] === 'COND-0001' ? 'by cell' : 'built in'), h('td', null, f[1])));
     });
+    $('spec-source').textContent = spec.report + ' version ' + spec.version + ' schema and specification, ' + spec.rules.length.toLocaleString('en-US') + ' rules';
     searchRules();
   }
 
@@ -687,29 +793,29 @@
     });
   }
 
-  function init(spec) {
-    state.spec = spec;
-    $('report-name').textContent = spec.report + ' version ' + spec.version;
-    $('spec-source').textContent = spec.report + ' version ' + spec.version + ' schema and specification, ' + spec.rules.length.toLocaleString('en-US') + ' rules';
-    MONTHS.forEach(function (m, i) { $('h-period').appendChild(h('option', { value: String(i + 1) }, (i + 1) + ' - ' + m)); });
-    var now = new Date(), last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    $('h-year').value = last.getFullYear();
-    $('h-period').value = String(last.getMonth() + 1);
-    loadSetup();
-    $('profile-summary').textContent = profileSummary();
-
-    // region codes, read off the BSP's own regional rules
-    var regions = {};
-    spec.rules.forEach(function (r) {
-      var m = /^RIN-B1560[- ](.+)$/.exec(r[0]), c = /="(\d+)"/.exec(r[4]);
-      if (m && c) regions[c[1]] = m[1];
+  async function init() {
+    var reports = SPEC.list();
+    reports.forEach(function (r) {
+      $('report').appendChild(h('option', { value: r.report }, r.report + ' ' + r.version + (r.title ? '  -  ' + r.title : '')));
     });
-    var regionText = Object.keys(regions).sort(function (a, b) { return a - b; }).map(function (k) { return k + ' = ' + regions[k]; }).join(', ');
-    $('branch-help').textContent = 'Region codes used by the rules: ' + regionText + '. Location codes: 1 = NCR, 2 = Luzon outside NCR, 3 = Visayas, 4 = Mindanao, 5 = foreign office.';
+    $('report-list').textContent = 'Reports this tool knows: ' + reports.map(function (r) { return r.report + ' ' + r.version; }).join(', ') + '.';
+    loadSetup();
+    var known = reports.some(function (r) { return r.report === saved.report; });
+    await useReport(known ? saved.report : reports[0].report);
 
     var rerun = function () { $('profile-summary').textContent = profileSummary(); saveSetup(); run(); };
-    ['h-undertaking', 'h-year', 'h-period', 'p-group', 'p-parent', 'p-branches', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
+    ['p-group', 'p-parent', 'p-branches', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
       $(id).addEventListener('change', rerun);
+    });
+    $('report').addEventListener('change', function () {
+      state.input = null;
+      state.result = null;
+      $('results').hidden = true;
+      $('empty').hidden = false;
+      $('schedules').hidden = true;
+      $('schedules-empty').hidden = false;
+      fail('');
+      useReport(this.value).then(saveSetup, function (e) { fail(e.message); });
     });
 
     var drop = $('drop');
@@ -726,11 +832,10 @@
     $('schedule-filled').addEventListener('change', renderSchedule);
     $('rule-search').addEventListener('input', searchRules);
     tabs();
-    renderRules();
   }
 
-  SPEC.load().then(init, function (e) { fail(e.message); });
+  init().catch(function (e) { fail(e && e.message ? e.message : String(e)); });
 
   // For the test page and for debugging in the console.
-  B.app = { state: state, run: run, chooseFile: chooseFile };
+  B.app = { state: state, run: run, chooseFile: chooseFile, useReport: useReport };
 })();

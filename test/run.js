@@ -11,7 +11,7 @@ const fx = require('./fixtures.js');
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
-let spec;
+let spec, wrr;
 
 const codes = (r) => r.findings.map((f) => f.code);
 const has = (r, code) => codes(r).includes(code);
@@ -127,6 +127,7 @@ test('schema: unknown, calculated, duplicated and misplaced elements', () => {
   expect(/XSD-UNKNOWN <NOPE> is not a schedule/);
   expect(/XSD-CALCULATED Schedule MLR_I is put together by the BSP/);
   expect(/XSD-TEXT/);
+  assert.strictEqual(r.findings.find((f) => f.code === 'XSD-TEXT').sev, 'warning', 'the BSP has accepted stray text');
   expect(/XSD-ATTRIBUTE Attribute unit/);
   expect(/XSD-DUPLICATE MSME_1A \/ MAIN \/ R0010C0010/);
   assert.ok(r.findings.filter((f) => f.code === 'XSD-CALCULATED')[0].line > 0);
@@ -185,7 +186,7 @@ test('samples: clean files have no findings', () => {
 
 test('samples: the file with errors reports each of them', () => {
   const r = checkXml(sample('with-errors/FRP_S_RB0001_2026-03_errors.xml'));
-  for (const code of ['XSD-TYPE', 'XSD-CALCULATED', 'XSD-UNKNOWN', 'SPEC-NOT-APPLICABLE', 'REQ-FRP_11A234-2', 'REQ-FRP_IS-1',
+  for (const code of ['XSD-TYPE', 'XSD-CALCULATED', 'XSD-UNKNOWN', 'COND-0001', 'REQ-FRP_11A234-2', 'REQ-FRP_IS-1',
     'RIN-MLR10-8', 'STG1-FRP_BS-USD-PESOEQ-MAIN-R0010C0040', 'STG1-PBS_Solo-POSITIVE_Z-MAIN2-R0160C0010', 'XREQ-BRIS_BS-BRANCH-2']) {
     assert.ok(has(r, code), code + ' missing from ' + codes(r).join(', '));
   }
@@ -356,10 +357,128 @@ test('template: numbers become the text the XML would carry', () => {
   const type = (n) => spec.types.find((t) => t.n === n);
   assert.strictEqual(TEMPLATE.toRaw(1234.5600000000001, type('Ptype_amount')), '1234.56');
   assert.strictEqual(TEMPLATE.toRaw(1234.567, type('Ptype_amount')), '1234.567');
-  assert.strictEqual(TEMPLATE.toRaw(1e-9, type('Ptype_amount')), '0');
+  assert.strictEqual(TEMPLATE.toRaw(1e-9, type('Ptype_amount')), '0.000000001');
+  assert.strictEqual(TEMPLATE.toRaw(0.1 + 0.2, type('Ptype_amount')), '0.3', 'binary dust goes');
+  assert.strictEqual(TEMPLATE.toRaw(98358232.839999944, type('Ptype_amount')), '98358232.8399999', 'decimals a formula left behind stay');
   assert.strictEqual(TEMPLATE.toRaw(12, type('Ptype_number_of9')), '12');
   assert.strictEqual(TEMPLATE.toRaw('Common [2]', type('EnumList_CLASS_STOCK_3')), '2');
   assert.strictEqual(TEMPLATE.toRaw('2020/05/17', spec.types.find((t) => t.b === 'D')), '2020-05-17');
+});
+
+// ---- more than one report ------------------------------------------------------
+
+const wrrXml = (forms, opts) => fx.buildXml(wrr, Object.assign({ from: '2026-09-18', to: '2026-09-24', forms }, opts));
+const checkWrr = (xml, bank) => ENGINE.check(wrr, ENGINE.readXml(xml, wrr), { profile: { bank: { BNKGRP: bank } } });
+const week = (row, amount) => ({ [row + 'C0020']: amount, [row + 'C0050']: amount, [row + 'C0060']: amount, [row + 'C0070']: amount, [row + 'C0080']: amount });
+
+test('reports: each file says which report it is', () => {
+  assert.deepStrictEqual(SPEC.list().map((r) => r.report), ['FRP_S', 'WRR_RCB']);
+  assert.strictEqual(SPEC.detectXmlText(sample('clean/WRR_RCB_RB0001_2026-09-18.xml')), 'WRR_RCB');
+  assert.strictEqual(SPEC.detectXmlText(sample('clean/FRP_S_RB0001_2026-02.xml')), 'FRP_S');
+  assert.strictEqual(SPEC.detectXmlText(sample('with-errors/not-well-formed.xml')), 'FRP_S', 'works on a broken file too');
+  assert.strictEqual(SPEC.detectXmlText('<!-- note --><?pi x?><p:WRR_RCB xmlns:p="http://bsp.gov.ph/xml/WRR_RCB/1.0"/>'), 'WRR_RCB');
+  assert.strictEqual(SPEC.detectXmlText('<Other/>'), null);
+  assert.strictEqual(SPEC.detectSheets(['WRR']), 'WRR_RCB');
+  assert.strictEqual(SPEC.detectSheets(['FRP_1', 'FRP_BS', 'dropdowns']), 'FRP_S');
+  assert.strictEqual(SPEC.detectSheets(['Sheet1']), null);
+  assert.deepStrictEqual(wrr.needs, { bank: { BNKGRP: true }, branches: false, history: false });
+  assert.ok(spec.needs.history && spec.needs.branches && spec.needs.bank.A_TRUST);
+});
+
+test('WRR: samples', () => {
+  let r = checkWrr(sample('clean/WRR_RCB_RB0001_2026-09-18.xml'), 'RB');
+  assert.deepStrictEqual(r.findings.map((f) => f.code + ' ' + f.msg), []);
+  assert.strictEqual(r.stats.passed, 1, 'the named "others" line');
+  r = checkWrr(sample('with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml'), 'RB');
+  const count = (code) => r.findings.filter((f) => f.code === code).length;
+  assert.strictEqual(count('XSD-TYPE'), 2);
+  assert.strictEqual(count('XSD-CALCULATED'), 1);
+  assert.strictEqual(count('COND-0001'), 5);
+  assert.strictEqual(count('CHECK-PERIOD'), 2);
+  assert.strictEqual(count('STG1-WRR-MAIN-R0280'), 1);
+  assert.ok(r.findings.filter((f) => f.code === 'CHECK-PERIOD').every((f) => f.sev === 'warning'));
+  assert.ok(/only for bank type TB/.test(r.findings.find((f) => f.code === 'COND-0001').msg));
+});
+
+test('WRR: the schema requires the schedule, its table and the dates', () => {
+  let r = checkWrr(wrrXml({}), 'RB');
+  assert.ok(r.findings.some((f) => f.code === 'XSD-REQUIRED' && /<WRR> is missing/.test(f.msg)));
+  r = checkWrr(wrrXml({ WRR: {} }), 'RB');
+  assert.ok(r.findings.some((f) => f.code === 'XSD-REQUIRED' && /no <MAIN> table/.test(f.msg)));
+  r = checkWrr(wrrXml({ WRR: { MAIN: {} } }), 'RB');
+  assert.deepStrictEqual(codes(r), []);
+  r = checkWrr(wrrXml({ WRR: { MAIN: {} } }).replace(/\s*<ToDate>[^<]*<\/ToDate>/, ''), 'RB');
+  assert.ok(r.findings.some((f) => f.code === 'XSD-HEADER' && /ToDate/.test(f.msg)));
+  r = checkWrr(wrrXml({ WRR: { MAIN: {} } }, { from: '18/09/2026' }), 'RB');
+  assert.ok(r.findings.some((f) => f.code === 'XSD-TYPE' && /Header \/ FromDate/.test(f.msg)));
+  r = checkWrr(wrrXml({ WRR: { MAIN: {} } }, { from: '2026-09-25', to: '2026-09-24' }), 'RB');
+  assert.ok(r.findings.some((f) => f.code === 'CHECK-PERIOD' && /before FromDate/.test(f.msg)));
+});
+
+test('WRR: weekend columns and totals are worked out; conditional line follows the bank type', () => {
+  const cells = Object.assign(week('R0020', '100.00'), week('R0040', '10.00'), week('R0060', '5.50'), week('R0120', '7.00'));
+  cells.R0020C0050 = '120.00';
+  let r = checkWrr(wrrXml({ WRR: { MAIN: cells } }), 'TB');
+  assert.deepStrictEqual(codes(r), [], 'a thrift bank may report mortgage certificates');
+  const ev = r.evaluator;
+  assert.strictEqual(ev.valueOf('WRR', 'MAIN', 'R0020C0030'), 100, 'Saturday repeats Friday');
+  assert.strictEqual(ev.valueOf('WRR', 'MAIN', 'R0020C0040'), 100, 'Sunday repeats Friday');
+  assert.strictEqual(ev.valueOf('WRR', 'MAIN', 'R0030C0020'), 15.5);
+  assert.strictEqual(ev.valueOf('WRR', 'MAIN', 'R0010C0050'), 135.5);
+  assert.strictEqual(ev.valueOf('WRR', 'MAIN', 'R0110C0040'), 7);
+  r = checkWrr(wrrXml({ WRR: { MAIN: cells } }), 'RB');
+  assert.strictEqual(r.findings.filter((f) => f.code === 'COND-0001' && f.sev === 'error').length, 5);
+  r = checkWrr(wrrXml({ WRR: { MAIN: cells } }), undefined);
+  assert.deepStrictEqual(codes(r), [], 'bank type not set: no verdict on the conditional line');
+  assert.strictEqual(r.stats.cellsNotChecked, 5);
+  r = checkWrr(wrrXml({ WRR: { MAIN: Object.assign({}, cells, week('R0120', '0')) } }), 'RB');
+  assert.deepStrictEqual(r.findings.map((f) => f.sev + ' ' + f.code), Array(5).fill('warning COND-0001'), 'a zero is only a warning');
+  assert.strictEqual(r.verdict, 'warning');
+});
+
+test('WRR: an "others" line needs both a name and an amount', () => {
+  const run = (cells) => codes(checkWrr(wrrXml({ WRR: { MAIN: cells } }), 'RB'));
+  assert.deepStrictEqual(run(Object.assign({ R0270C0010: 'Dormant accounts' }, week('R0270', '5.00'))), []);
+  assert.deepStrictEqual(run({ R0270C0010: 'Dormant accounts' }), ['STG1-WRR-MAIN-R0270']);
+  assert.deepStrictEqual(run(week('R0290', '5.00')), ['STG1-WRR-MAIN-R0290']);
+  assert.deepStrictEqual(run(Object.assign({ R0310C0010: '' }, week('R0310', '5.00'))), ['STG1-WRR-MAIN-R0310'], 'an empty name is no name');
+  assert.deepStrictEqual(run({ R0300C0010: 'x'.repeat(51) }).filter((c) => c === 'XSD-TYPE'), ['XSD-TYPE']);
+});
+
+test('WRR: the Excel template', async () => {
+  const sheet = {
+    A1: 'WRR', A2: 'Weekly Reserves Report', A4: 'MAIN',
+    E7: 'C0010', F7: 'C0020', G7: 'C0030', H7: 'C0040', I7: 'C0050', J7: 'C0060', K7: 'C0070', L7: 'C0080',
+    B8: 'A. Domestic Deposits', C8: '410', D8: 'R0010',
+    C13: '833', D13: 'R0060', F13: 5200000.5, I13: 5210000, J13: 5195000.25, K13: 5180000, L13: 5205000.75,
+    C27: '580', D27: 'R0190', F27: 98358232.839999944, I27: 98274430.079999954, J27: 9780000.33, K27: 9730000.54, L27: 9690000.92,
+    C35: '666', D35: 'R0270', E35: 'Dormant accounts', F35: 15000, I35: 15000, J35: 15000, K35: 15000, L35: 15000, G35: 15000
+  };
+  const header = { Undertaking: 'RB0001', FromDate: '2026-09-18', ToDate: '2026-09-24' };
+  const book = await TEMPLATE.readWorkbook(fx.makeXlsx({ WRR: sheet }));
+  assert.strictEqual(SPEC.detectSheets(book.sheets.map((x) => x.name)), 'WRR_RCB');
+  const doc = TEMPLATE.readTemplate(book, wrr, header);
+  const main = doc.forms.WRR[0].tables.MAIN.cells;
+  assert.strictEqual(main.R0060C0020.v, 5200000.5);
+  assert.strictEqual(main.R0270C0010.v, 'Dormant accounts');
+  assert.strictEqual(main.R0190C0050.v, 98274430.08, 'fifteen significant digits round this one clean');
+  assert.ok(main.R0190C0020.bad);
+  const msgs = doc.findings.map((f) => f.code + ' ' + f.msg);
+  assert.ok(msgs.some((m) => /XSD-TYPE WRR \/ MAIN \/ R0190C0020 \(WRR!F27\): "98358232.8399999" has more than 2 decimal places/.test(m)), msgs.join('\n'));
+  assert.ok(msgs.some((m) => /TPL-NOT-INPUT WRR \/ MAIN \/ R0270C0030 \(WRR!G35\)/.test(m)), msgs.join('\n'));
+  assert.strictEqual(doc.header.FromDate.v, '2026-09-18');
+  const r = ENGINE.check(wrr, doc, { profile: { bank: { BNKGRP: 'RB' } } });
+  assert.deepStrictEqual(r.findings.filter((f) => f.kind !== 'file').map((f) => f.code), []);
+  const empty = TEMPLATE.readTemplate(await TEMPLATE.readWorkbook(fx.makeXlsx({ WRR: { A1: 'WRR', A4: 'MAIN', F7: 'C0020', D9: 'R0020' } })), wrr, header);
+  assert.ok(empty.findings.some((f) => f.code === 'XSD-REQUIRED' && /Sheet WRR has no values/.test(f.msg)));
+});
+
+test('value formats: decimals count the value unless a pattern says how to write it', () => {
+  const loose = wrr.types.find((t) => t.n === 'Decimal_TD18_FD2'), amount = wrr.types.find((t) => t.n === 'Ptype_amount');
+  assert.deepStrictEqual(ENGINE.checkValue(loose, '1.500'), { v: 1.5 });
+  assert.ok(/more than 2 decimal/.test(ENGINE.checkValue(loose, '1.505').err));
+  assert.ok(/more than 2 decimal/.test(ENGINE.checkValue(amount, '1.500').err));
+  assert.ok(/more than 2 decimal/.test(ENGINE.checkValue(amount, '98358232.8399999').err));
 });
 
 // ---- repository hygiene --------------------------------------------------------
@@ -386,7 +505,8 @@ test('index.html is the current build of src/', () => {
 });
 
 (async () => {
-  spec = await SPEC.load();
+  spec = await SPEC.load('FRP_S');
+  wrr = await SPEC.load('WRR_RCB');
   let failed = 0;
   for (const [name, fn] of tests) {
     try {

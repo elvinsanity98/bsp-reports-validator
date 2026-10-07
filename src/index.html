@@ -12,7 +12,7 @@
   <div class="wrap top-inner">
     <div>
       <h1>BSP Reports Validator</h1>
-      <p class="tagline">Pre-check an FRP submission (<span id="report-name">FRP_S</span>) before you send it to the BSP.</p>
+      <p class="tagline">Pre-check a report submission before you send it to the BSP.</p>
     </div>
     <p class="offline" title="The page makes no network requests. The file is read by your browser only.">
       <span class="dot" aria-hidden="true"></span>Works offline. Your file stays on this computer.
@@ -30,18 +30,17 @@
 
     <div class="setup">
       <fieldset class="setup-block">
-        <legend>Reporting period <small>used for the Excel template; an XML file carries its own</small></legend>
+        <legend>Report <small>a file is recognised by itself; pick one here to see its rules or set its period</small></legend>
         <div class="row">
-          <label class="field">Bank code (Undertaking)
-            <input type="text" id="h-undertaking" autocomplete="off" spellcheck="false" placeholder="as registered with the BSP">
-          </label>
-          <label class="field">Year
-            <input type="number" id="h-year" min="2000" max="2099" step="1">
-          </label>
-          <label class="field">Month
-            <select id="h-period"></select>
+          <label class="field grow">Report
+            <select id="report"></select>
           </label>
         </div>
+      </fieldset>
+
+      <fieldset class="setup-block">
+        <legend>Reporting period <small>used for the Excel template; an XML file carries its own</small></legend>
+        <div class="row" id="header-fields"></div>
       </fieldset>
 
       <details class="setup-block" id="profile-box">
@@ -49,7 +48,7 @@
         <p class="muted">The BSP looks these facts up in its own records. They decide which schedules are required and which rules apply.
           Rules that need a fact left blank here are counted as &ldquo;not checked&rdquo;.</p>
         <div class="row">
-          <label class="field">Bank type
+          <label class="field" data-need="BNKGRP">Bank type
             <select id="p-group">
               <option value="">Not set</option>
               <option value="RB">Rural bank (RB)</option>
@@ -58,7 +57,7 @@
               <option value="DB">Digital bank (DB)</option>
             </select>
           </label>
-          <label class="field">Parent bank
+          <label class="field" data-need="PARENTBNKGRP">Parent bank
             <select id="p-parent">
               <option value="NONE">None, or not a bank</option>
               <option value="UKB">Universal or commercial bank</option>
@@ -67,19 +66,19 @@
               <option value="RB">Rural bank</option>
             </select>
           </label>
-          <label class="field">Banking offices <small>head office and branches</small>
+          <label class="field" data-need="BRANCHCOUNT DOMESTICBRANCHCOUNT">Banking offices <small>head office and branches</small>
             <input type="number" id="p-branches" min="0" step="1" placeholder="not set">
           </label>
         </div>
         <div class="row checks">
-          <label class="check"><input type="checkbox" id="p-domestic" checked><span>Domestic bank <small>not a branch of a foreign bank</small></span></label>
-          <label class="check"><input type="checkbox" id="p-trust"><span>Has trust authority <small>files the FRPTI schedules</small></span></label>
-          <label class="check"><input type="checkbox" id="p-emi"><span>E-money issuer <small>files the EMONEY schedules</small></span></label>
+          <label class="check" data-need="ISDOMESTIC"><input type="checkbox" id="p-domestic" checked><span>Domestic bank <small>not a branch of a foreign bank</small></span></label>
+          <label class="check" data-need="A_TRUST"><input type="checkbox" id="p-trust"><span>Has trust authority <small>files the FRPTI schedules</small></span></label>
+          <label class="check" data-need="A_EMI"><input type="checkbox" id="p-emi"><span>E-money issuer <small>files the EMONEY schedules</small></span></label>
         </div>
-        <label class="field wide">Branch list for the BRIS regional checks <small>optional; one office per line: branch code, region code, location code</small>
+        <label class="field wide" data-need="@branches">Branch list for the BRIS regional checks <small>optional; one office per line: branch code, region code, location code</small>
           <textarea id="p-branch-list" rows="3" spellcheck="false" placeholder="001, 9, 4&#10;002, 9, 4"></textarea>
         </label>
-        <p class="muted" id="branch-help"></p>
+        <p class="muted" id="branch-help" data-need="@branches"></p>
       </details>
 
       <details class="setup-block" id="history-box">
@@ -111,7 +110,8 @@
     <div class="empty" id="empty">
       <p><strong>No file checked yet.</strong></p>
       <p>The validator checks that the file follows the BSP schema, works out the totals the BSP calculates,
-        and then runs every rule of the BSP specification: required schedules, cell-level checks and cross-schedule reconciliations.</p>
+        and then runs every rule of the BSP specification for the report.</p>
+      <p class="muted" id="report-list"></p>
     </div>
     <div id="results" hidden></div>
   </section>
@@ -147,7 +147,7 @@
       <ul>
         <li>The BSP&rsquo;s reference data about your bank. Enter the facts under <em>Bank profile</em>; anything left blank turns the rules that need it into &ldquo;not checked&rdquo;.</li>
         <li>Your earlier submissions as stored at the BSP. Add the earlier files under <em>Earlier periods</em> to run the period-on-period rules.</li>
-        <li>Cells marked &ldquo;not used in this report&rdquo; are reported as warnings, because the published files do not say whether the BSP rejects or ignores a value there.</li>
+        <li><code>CHECK-</code> findings are this tool&rsquo;s own sanity checks. They are not BSP rules and are always warnings.</li>
         <li>An empty sheet in the Excel template is treated as a schedule that was not submitted.</li>
       </ul>
     </div>
@@ -171,7 +171,8 @@
     a file that passes here can still be rejected. Rules: <span id="spec-source"></span>.</p>
 </footer>
 
-<script src="spec-data.js"></script>
+<script src="spec-frp_s.js"></script>
+<script src="spec-wrr_rcb.js"></script>
 <script src="xml.js"></script>
 <script src="formula.js"></script>
 <script src="spec.js"></script>

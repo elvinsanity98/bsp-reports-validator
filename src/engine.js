@@ -7,9 +7,10 @@
 //
 // Three layers of checks:
 //   1. the file is well-formed XML and follows the XSD (structure, value formats)
-//   2. cells the specification marks as not applicable to this report are empty
+//   2. conditional cells hold no value while their condition is false (the BSP's COND-0001)
 //   3. every rule of the specification's "Assertions" sheet, after working out
 //      the totals the BSP calculates itself
+// plus a few sanity checks of this tool's own, coded CHECK- and always warnings.
 //
 // A rule that needs something this tool does not have (the bank's reference
 // data at the BSP, or an earlier period's submission) is counted as "not
@@ -123,10 +124,11 @@
         return { err: 'is not a number; it must be ' + typeWords(type) };
       }
       var v = Number(s);
-      var frac = (s.split('.')[1] || '').replace(/0+$/, '');
-      if (type.fd !== undefined && (s.split('.')[1] || '').length > Number(type.fd)) {
-        return { err: 'has more than ' + type.fd + ' decimal places' };
-      }
+      // The decimals facet counts the value, so 1.50 fits two decimals; a type
+      // with a pattern also limits how the number may be written (1.500 fails).
+      var written = s.split('.')[1] || '', frac = written.replace(/0+$/, '');
+      var tooFine = type.fd !== undefined && (frac.length > Number(type.fd) || (type.re && written.length > Number(type.fd)));
+      if (tooFine) return { err: 'has more than ' + type.fd + ' decimal places. Round it to ' + type.fd };
       if (type.min !== undefined && v < Number(type.min)) {
         return { err: Number(type.min) === 0 ? 'is negative; it must be ' + typeWords(type) : 'is below the minimum of ' + type.min };
       }
@@ -210,8 +212,13 @@
         add('error', 'XSD-ATTRIBUTE', 'Attribute ' + a + ' on <' + el.qname + '> is not part of the schema.', el);
       });
     }
+    // The schema has no place for text between elements, but the BSP has
+    // accepted a file with a stray character there, so this is a warning.
     function strayText(el) {
-      if (/\S/.test(el.text)) add('error', 'XSD-TEXT', '<' + el.qname + '> holds other elements, but there is loose text inside it: "' + el.text.trim().slice(0, 40) + '".', el);
+      if (/\S/.test(el.text)) {
+        add('warning', 'XSD-TEXT', '<' + el.qname + '> holds other elements, but there is loose text inside it: "' + el.text.trim().slice(0, 40) +
+          '". The schema does not allow it. Remove it.', el);
+      }
     }
     function nsOk(el) {
       if (el.ns !== top.ns && !nsWarned) {
@@ -392,8 +399,38 @@
         doc.forms[form.n] = [one];
       }
     });
-    if (!seen.Header) add('error', 'XSD-HEADER', 'The file has no <Header> (Undertaking, Year, Period). It is required.', top, { form: 'Header' });
+    if (!seen.Header) {
+      add('error', 'XSD-HEADER', 'The file has no <Header> (' + spec.header.map(function (h) { return h[0]; }).join(', ') + '). It is required.', top, { form: 'Header' });
+    }
+    required(spec, doc, top);
     return doc;
+  }
+
+  // Schedules and tables the schema demands in every file.
+  function required(spec, doc, at) {
+    var sheet = doc.source === 'xlsx';
+    spec.forms.forEach(function (form) {
+      var list = doc.forms[form.n];
+      if (form.r && !list) {
+        doc.findings.push({
+          sev: 'error', code: 'XSD-REQUIRED', kind: 'file', form: form.n, line: at ? at.line : undefined,
+          msg: sheet
+            ? 'Sheet ' + form.n + ' has no values. The schema requires this schedule in every file.'
+            : 'Schedule <' + form.n + '> is missing. The schema requires it in every file.'
+        });
+      }
+      (list || []).forEach(function (inst) {
+        form.tb.forEach(function (t) {
+          if (!t.r || inst.tables[t.n]) return;
+          doc.findings.push({
+            sev: 'error', code: 'XSD-REQUIRED', kind: 'file', form: form.n, table: t.n, line: inst.line,
+            msg: sheet
+              ? 'Table ' + t.n + ' on sheet ' + form.n + ' has no values. The schema requires it.'
+              : form.n + ' has no <' + t.n + '> table. The schema requires it.'
+          });
+        });
+      });
+    });
   }
 
   // Turns the bytes of a file into text, honouring a byte-order mark or the
@@ -659,7 +696,7 @@
               if (a.kind === 'table') return a.form.absent === true || (a.spec.x === 1 && a.data === null);
               return false;
             }
-            return a === null;
+            return a === null || a === '';
           case 'IF':
             a = scalar(this.eval(n.args[0], ctx));
             if (isUnk(a)) return a;
@@ -857,7 +894,8 @@
   function check(spec, doc, opts) {
     opts = opts || {};
     var findings = doc.findings.slice();
-    var stats = { rules: spec.rules.length, passed: 0, failed: 0, notApplicable: 0, skipped: {}, skippedTotal: 0, skippedWhy: {} };
+    var stats = { rules: spec.rules.length, passed: 0, failed: 0, notApplicable: 0, skipped: {}, skippedTotal: 0, skippedWhy: {},
+      cellsNotChecked: 0, cellsNotCheckedWhy: {} };
     var result = { doc: doc, findings: findings, stats: stats, spec: spec };
     if (doc.fatal) return finish(result);
 
@@ -868,7 +906,10 @@
     var ev = new Evaluator(spec, doc, { profile: opts.profile, history: history });
     result.evaluator = ev;
 
-    // Cells the specification switches off for this report.
+    sanity(spec, doc, findings);
+
+    // Conditional cells: the specification gives a cell a condition, and the
+    // BSP rejects a value reported while the condition is false (its COND-0001).
     var condTrue = spec.conds.map(function (c) { return FORMULA.parse(c); });
     Object.keys(doc.forms).forEach(function (name) {
       ev.instances(name).forEach(function (fctx) {
@@ -879,16 +920,25 @@
             var cells = base.data.cells;
             Object.keys(cells).forEach(function (code) {
               var def = t.spec.c[code], d = cells[code];
-              if (!def || def.length < 3 || d.bad || d.v === null || d.v === 0 || d.v === '') return;
+              if (!def || def.length < 3 || d.bad || d.v === null || d.v === '') return;
               var ctx = { form: fctx, table: t, item: base.kind === 'item' ? base : null, vars: {} };
               var ok = ev.eval(condTrue[def[2]], ctx);
-              if (isUnk(ok) || truthy(ok)) return;
+              if (isUnk(ok)) {
+                stats.cellsNotChecked++;
+                stats.cellsNotCheckedWhy[ok.why] = (stats.cellsNotCheckedWhy[ok.why] || 0) + 1;
+                return;
+              }
+              if (truthy(ok)) return;
+              // The BSP is known to reject a non-zero value here. A reported zero
+              // has not been seen in its results either way, so it is a warning.
+              var zero = d.v === 0;
               findings.push({
-                sev: 'warning', code: 'SPEC-NOT-APPLICABLE', kind: 'cell', form: name, table: tn, cell: code,
+                sev: zero ? 'warning' : 'error', code: 'COND-0001', kind: 'cell', form: name, table: tn, cell: code,
                 item: base.kind === 'item' ? base.index : undefined, line: d.line, loc: d.loc, value: d.v,
                 label: SPEC.cellLabel(t.spec, code),
-                msg: name + ' / ' + tn + ' / ' + code + ' has a value (' + fmt(d.v) + '), but the specification marks this cell as not used in ' +
-                  spec.report + ' (condition: ' + spec.conds[def[2]] + ').'
+                msg: 'Conditional field [' + name + '][' + tn + '][' + code + '] should not be reported: the cell ' +
+                  condWords(spec.conds[def[2]]) + '. It holds ' + fmt(d.v) +
+                  (zero ? '. The BSP rejects a value here and may reject a zero too; leave it blank.' : '; leave it blank.')
               });
             });
           });
@@ -992,6 +1042,45 @@
     return finish(result);
   }
 
+  // Says in words when a conditional cell is used, for the common conditions.
+  function condWords(text) {
+    var m = /^\(?\s*RCTX\("RCODE"\)\s*(?:<>|!=)\s*"([^"]+)"\s*\)?$/.exec(text);
+    if (m) return 'is not used in ' + m[1];
+    m = /^ISANYOF\(LOOKUP\("BANK";\s*"BNKGRP";[^)]*\);\s*(.+?)\)\s*=\s*TRUE$/.exec(text);
+    if (m) return 'is only for bank type ' + m[1].replace(/"/g, '').replace(/\s*;\s*/g, ', ');
+    if (text === 'FALSE') return 'is never used';
+    return 'is only used when ' + text;
+  }
+
+  // Checks that are not in the BSP's published files but catch slips the
+  // published rules cannot see. Always warnings, always coded CHECK-.
+  function sanity(spec, doc, findings) {
+    var from = doc.header.FromDate, to = doc.header.ToDate;
+    if (!from || !to || from.bad || to.bad) return;
+    var a = Date.parse(from.v + 'T00:00:00Z'), b = Date.parse(to.v + 'T00:00:00Z');
+    var days = Math.round((b - a) / 86400000);
+    var where = { form: 'Header', line: from.line, loc: from.loc };
+    function warn(cell, msg) {
+      findings.push({ sev: 'warning', code: 'CHECK-PERIOD', kind: 'file', form: 'Header', cell: cell, line: where.line, loc: where.loc, msg: msg });
+    }
+    if (days < 0) {
+      warn('ToDate', 'ToDate (' + to.v + ') is before FromDate (' + from.v + ').');
+      return;
+    }
+    // A weekly report whose columns run Friday to Thursday covers exactly that week.
+    var weekly = spec.forms.some(function (f) {
+      return f.tb.some(function (t) {
+        var c = t.cols || [];
+        return c.length >= 7 && /Friday$/.test(c[c.length - 7][1]) && /Thursday$/.test(c[c.length - 1][1]);
+      });
+    });
+    if (!weekly) return;
+    var NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    var day = new Date(a).getUTCDay();
+    if (day !== 5) warn('FromDate', 'FromDate (' + from.v + ') is a ' + NAMES[day] + '. The report week starts on a Friday.');
+    if (days !== 6) warn('ToDate', 'FromDate to ToDate covers ' + (days + 1) + ' day(s). The report week is the 7 days from Friday to Thursday.');
+  }
+
   function finish(result) {
     var c = { error: 0, warning: 0, info: 0 };
     result.findings.forEach(function (f) { c[f.sev]++; });
@@ -1013,7 +1102,7 @@
   }
 
   return {
-    readXml: readXml, readXmlBytes: readXmlBytes, decode: decode, check: check, checkValue: checkValue, typeWords: typeWords,
+    readXml: readXml, readXmlBytes: readXmlBytes, decode: decode, required: required, check: check, checkValue: checkValue, typeWords: typeWords,
     Evaluator: Evaluator, compare: compare, fmt: fmt, isUnknown: isUnk, show: show
   };
 });

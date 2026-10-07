@@ -51,10 +51,42 @@ function broken(spec) {
   return xml;
 }
 
-SPEC.load().then((spec) => {
+// Weekly Reserves Report: Friday, Monday to Thursday are typed; the BSP copies
+// Friday into Saturday and Sunday.
+function week(amounts, others) {
+  const cells = {};
+  const days = ['C0020', 'C0050', 'C0060', 'C0070', 'C0080'];
+  Object.keys(amounts).forEach((row) => days.forEach((col, i) => { cells[row + col] = amounts[row][i]; }));
+  Object.assign(cells, others);
+  return { WRR: { MAIN: cells } };
+}
+
+function wrrClean() {
+  return week({
+    R0060: ['5200000.50', '5210000.00', '5195000.25', '5180000.00', '5205000.75'],     // savings deposits
+    R0100: ['2100000.00', '2100000.00', '2100000.00', '2100000.00', '2100000.00'],     // time deposits
+    R0190: ['9800000.84', '9790000.08', '9780000.33', '9730000.54', '9690000.92'],     // total loan portfolio
+    R0210: ['480000.26', '455000.00', '462000.10', '470500.00', '468250.40'],          // due from local banks
+    R0270: ['15000.00', '15000.00', '15000.00', '15000.00', '15000.00']                // others, line 1
+  }, { R0270C0010: 'Dormant accounts' });
+}
+
+function wrrBroken(spec) {
+  const forms = week({
+    R0060: ['5200000.5', '5,210,000.00', '5195000.25', '5180000.00', '5205000.75'],    // a comma
+    R0190: ['9800000.8399999', '9790000.08', '9780000.33', '9730000.54', '9690000.92'], // decimals left by a formula
+    R0120: ['25000.00', '25000.00', '25000.00', '25000.00', '25000.00'],               // a line for thrift banks only
+    R0280: ['4000.00', '4000.00', '4000.00', '4000.00', '4000.00']                     // "others" amount with no name
+  }, { R0020C0030: '100.00' });                                                        // Saturday is copied by the BSP
+  return fx.buildXml(spec, { from: '2026-09-19', to: '2026-09-24', forms });           // week starts on a Saturday
+}
+
+Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB')]).then(([spec, wrr]) => {
   write('clean/FRP_S_RB0001_2026-03.xml', fx.buildXml(spec, { period: 3, forms: quarter(spec) }));
   write('clean/FRP_S_RB0001_2026-02.xml', fx.buildXml(spec, { period: 2, forms: month() }));
+  write('clean/WRR_RCB_RB0001_2026-09-18.xml', fx.buildXml(wrr, { from: '2026-09-18', to: '2026-09-24', forms: wrrClean() }));
   write('with-errors/FRP_S_RB0001_2026-03_errors.xml', broken(spec));
+  write('with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml', wrrBroken(wrr));
   write('with-errors/not-well-formed.xml', fx.buildXml(spec, { period: 2, forms: month() }).replace('</MLR_II>', '</MLR_2>'));
   write('README.txt', [
     'Sample files for the BSP Reports Validator.',
@@ -67,13 +99,18 @@ SPEC.load().then((spec) => {
     '  Branch list      001, 9, 4',
     '                   002, 9, 4',
     '',
-    'clean/FRP_S_RB0001_2026-03.xml         quarter-end file, no findings',
-    'clean/FRP_S_RB0001_2026-02.xml         monthly file, no findings',
-    'with-errors/FRP_S_RB0001_2026-03_errors.xml   schema errors, a missing schedule, failed reconciliations',
+    'clean/FRP_S_RB0001_2026-03.xml         FRP quarter-end file, no findings',
+    'clean/FRP_S_RB0001_2026-02.xml         FRP monthly file, no findings',
+    'clean/WRR_RCB_RB0001_2026-09-18.xml    weekly reserves report, no findings',
+    'with-errors/FRP_S_RB0001_2026-03_errors.xml       schema errors, a missing schedule, failed reconciliations',
+    'with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml  bad amounts, a thrift-bank line, an unnamed "others" line, a wrong week',
     'with-errors/not-well-formed.xml        a closing tag that does not match',
+    '',
+    'All figures are made up. The page recognises which report a file is.',
     '',
     'From the command line:',
     '  node cli.js samples/clean/FRP_S_RB0001_2026-03.xml --bank RB --offices 2 --branches samples/branches.csv',
+    '  node cli.js samples/clean/WRR_RCB_RB0001_2026-09-18.xml --bank RB',
     ''
   ].join('\r\n'));
   write('branches.csv', '001,9,4\r\n002,9,4\r\n');

@@ -12,8 +12,11 @@
 //   --foreign               branch of a foreign bank
 //   --branches FILE         CSV: branch code, region code, location code (1 NCR, 2 Luzon, 3 Visayas, 4 Mindanao, 5 foreign)
 // Excel template only (an XML file carries its own header):
-//   --code BANKCODE --year YYYY --month M
+//   --code BANKCODE             bank code (Undertaking)
+//   --year YYYY --month M       reports filed by month, such as FRP_S
+//   --from DATE --to DATE       reports filed by date range, such as WRR_RCB (YYYY-MM-DD)
 // Other:
+//   --report CODE           which report the file is, when it cannot be told from the file
 //   --prior FILE            an earlier period's XML, for period-on-period rules (repeatable)
 //   --csv FILE              write the findings to a CSV file
 //   --all                   list every finding (default: first 40)
@@ -25,7 +28,7 @@ const SPEC = require('./src/spec.js');
 const ENGINE = require('./src/engine.js');
 const TEMPLATE = require('./src/template.js');
 
-const VALUE_FLAGS = ['--bank', '--parent', '--offices', '--branches', '--code', '--year', '--month', '--prior', '--csv'];
+const VALUE_FLAGS = ['--bank', '--parent', '--offices', '--branches', '--code', '--year', '--month', '--from', '--to', '--report', '--prior', '--csv'];
 
 function parseArgs(argv) {
   const o = { prior: [], files: [] };
@@ -44,16 +47,33 @@ function parseArgs(argv) {
   return o;
 }
 
-async function readDoc(file, spec, o) {
+// Reads a file and works out which report it is. `report` names it when the
+// file cannot say (a template with renamed sheets, an XML with a wrong root).
+async function readDoc(file, o, report) {
   const bytes = new Uint8Array(fs.readFileSync(file));
-  if (/\.xls[xm]$/i.test(file)) return TEMPLATE.read(bytes, spec, { Undertaking: o.code, Year: o.year, Period: o.month });
+  const header = { Undertaking: o.code, Year: o.year, Period: o.month, FromDate: o.from, ToDate: o.to };
+  const pick = (found) => {
+    if (!report && !found) {
+      throw new Error('cannot tell which report ' + path.basename(file) + ' is. Name it with --report (' +
+        SPEC.list().map((s) => s.report).join(', ') + ').');
+    }
+    return SPEC.load(report || found);
+  };
+  if (/\.xls[xm]$/i.test(file)) {
+    const book = await TEMPLATE.readWorkbook(bytes);
+    const spec = await pick(SPEC.detectSheets(book.sheets.map((s) => s.name)));
+    return { spec, doc: TEMPLATE.readTemplate(book, spec, header) };
+  }
   if (/\.zip$/i.test(file)) {
     const zip = TEMPLATE.unzip(bytes);
     const xmls = zip.names.filter((n) => /\.xml$/i.test(n) && !/^__MACOSX\//.test(n));
     if (xmls.length !== 1) throw new Error('The zip should hold exactly one .xml file; it holds ' + xmls.length + '.');
-    return ENGINE.readXml(await zip.read(xmls[0]), spec);
+    const text = await zip.read(xmls[0]);
+    const spec = await pick(SPEC.detectXmlText(text));
+    return { spec, doc: ENGINE.readXml(text, spec) };
   }
-  return ENGINE.readXmlBytes(bytes, spec);
+  const spec = await pick(SPEC.detectXmlText(ENGINE.decode(bytes).text));
+  return { spec, doc: ENGINE.readXmlBytes(bytes, spec) };
 }
 
 function place(f) { return f.loc || (f.line !== undefined ? 'line ' + f.line : ''); }
@@ -67,9 +87,11 @@ async function main() {
   const o = parseArgs(process.argv.slice(2));
   if (o.files.length !== 1) {
     console.error('Usage: node cli.js <file.xml | file.zip | template.xlsx> [--bank RB] [--offices N] [--branches file.csv] [--prior earlier.xml] [--csv out.csv] [--all]');
+    console.error('Reports: ' + SPEC.list().map((s) => s.report + ' ' + s.version).join(', '));
     process.exit(2);
   }
-  const spec = await SPEC.load();
+  const file = o.files[0];
+  const { spec, doc } = await readDoc(file, o, o.report);
   const offices = o.offices === undefined ? undefined : Number(o.offices);
   const profile = {
     bank: {
@@ -89,24 +111,23 @@ async function main() {
   }
   const history = {};
   for (const prior of o.prior) {
-    const d = await readDoc(prior, spec, o);
+    const d = (await readDoc(prior, o, spec.report)).doc;
     const y = d.header.Year && d.header.Year.v, p = d.header.Period && d.header.Period.v;
     if (d.fatal || typeof y !== 'number' || typeof p !== 'number') throw new Error('Cannot read the period of ' + prior);
     history[y + '-' + ('0' + p).slice(-2)] = d;
   }
 
-  const file = o.files[0];
-  const doc = await readDoc(file, spec, o);
   const r = ENGINE.check(spec, doc, { profile, history });
   const st = r.stats, h = doc.header;
   const show = (x) => (x && !x.bad ? x.v : '(not given)');
 
   console.log(`File      ${path.basename(file)}  (${doc.source === 'xlsx' ? 'Excel input template' : 'XML'})`);
-  console.log(`Report    ${spec.report} version ${spec.version}`);
-  console.log(`Header    bank ${show(h.Undertaking)}, year ${show(h.Year)}, period ${show(h.Period)}`);
+  console.log(`Report    ${spec.report} version ${spec.version}${spec.title ? '  (' + spec.title + ')' : ''}`);
+  console.log(`Header    ${spec.header.map((x) => x[0] + ' ' + show(h[x[0]])).join(', ')}`);
   console.log(`Schedules ${Object.keys(doc.forms).length} with data`);
   console.log(`Rules     ${st.rules} in the specification: ${st.passed} passed, ${st.failed} failed, ${st.notApplicable} not applicable, ${st.skippedTotal} not checked`);
   Object.keys(st.skippedWhy).forEach((why) => console.log(`            not checked (${why}): ${st.skippedWhy[why]}`));
+  Object.keys(st.cellsNotCheckedWhy).forEach((why) => console.log(`Cells     ${st.cellsNotCheckedWhy[why]} conditional cell(s) not checked (${why})`));
   console.log(`Result    ${r.counts.error} error(s), ${r.counts.warning} warning(s)`);
 
   const list = o.all ? r.findings : r.findings.slice(0, 40);

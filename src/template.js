@@ -151,12 +151,12 @@
     if (typeof value === 'number') {
       if (type.b === 'D') return isoFromSerial(value);
       if (type.b === 's') return String(value);
-      // Formula results carry floating-point dust (1234.5600000000001); drop it.
-      var places = type.fd !== undefined ? Number(type.fd) : type.b === 'i' ? 0 : 6;
-      var rounded = Number(value.toFixed(places));
-      var v = Math.abs(value - rounded) <= 1e-9 * Math.max(1, Math.abs(value)) ? rounded : value;
+      // Excel works to 15 significant digits. Writing the number that way
+      // drops binary dust (0.30000000000000004 is 0.3) but keeps decimals a
+      // formula really left behind (98358232.8399999), which the BSP rejects.
+      var v = Number(value.toPrecision(15));
       var s = String(v);
-      return /e/i.test(s) ? v.toFixed(Math.min(20, places + 4)).replace(/\.?0+$/, '') : s;
+      return /e/i.test(s) ? v.toFixed(20).replace(/0+$/, '').replace(/\.$/, '') : s;
     }
     var text = String(value);
     if (type.enum) {
@@ -354,9 +354,13 @@
     });
 
     if (!matched) {
-      add('error', 'TPL-NO-SHEETS', 'No sheet of this workbook is named after a ' + spec.report + ' schedule (FRP_1, FRP_BS, ...). ' +
+      var names = spec.forms.filter(function (f) { return f.x; }).map(function (f) { return f.n; });
+      add('error', 'TPL-NO-SHEETS', 'No sheet of this workbook is named after a ' + spec.report + ' schedule (' +
+        names.slice(0, 2).join(', ') + (names.length > 2 ? ', ...' : '') + '). ' +
         'Use the BSP input template for ' + spec.report + ' version ' + spec.version + ' and keep its sheet names.');
       doc.fatal = true;
+    } else {
+      ENGINE.required(spec, doc, null);
     }
     return doc;
   }
