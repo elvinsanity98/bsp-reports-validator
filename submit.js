@@ -12,7 +12,8 @@
 //   node submit.js ui [--port 8777]                        the validator page with "Send to the BSP" buttons
 //
 // Options for sandbox and submit:
-//   --attach FILE      an additional file to send with the report (repeatable)
+//   --attach FILE      a file to file with the report, such as the signed Control Prooflist PDF (repeatable;
+//                      real submission only, the sandbox takes the report file alone)
 //   --report CODE      report code, when not the root element of the XML
 //   --code BANKCODE    bank code, when not in the file's Header
 //   --period P         reporting period as the BSP writes it: 2026-03, 2026-09-18_09-24
@@ -284,7 +285,11 @@ async function send(mode, o) {
   const p = await prepare(file, o);
   say((mode === 'sandbox' ? 'SANDBOX (trial run, nothing is filed)' : 'REAL SUBMISSION to the BSP'));
   say('  Report  ' + p.info.reportCode + '\n  Bank    ' + p.info.undertakingCode + '\n  Period  ' + p.info.period + '\n  File    ' + p.main.name + '  (' + p.main.data.length + ' bytes, SHA-256 ' + p.sha256.slice(0, 16) + '...)');
-  p.extras.forEach((x) => say('  Also    ' + x.name + '  (' + x.data.length + ' bytes)'));
+  // The sandbox takes the report file only, as in the BSP's own sandbox collection.
+  const extras = mode === 'production' ? p.extras : [];
+  if (mode === 'sandbox' && p.extras.length) say('  Note    the sandbox takes the report file only; --attach files go with the real submission');
+  extras.forEach((x) => say('  With    ' + x.name + '  (' + x.data.length + ' bytes)'));
+  if (mode === 'production' && !extras.length) say('  With    NO additional file. If the report needs its signed Control Prooflist PDF, stop and add --attach "<file.pdf>".');
   if (p.check) {
     say('  Own check: ' + p.check.errors + ' error(s), ' + p.check.warnings + ' warning(s)');
     p.check.first.forEach((m) => say('    ' + m.slice(0, 200)));
@@ -300,9 +305,9 @@ async function send(mode, o) {
   }
   const cred = await credentials(o);
   const client = API.createClient(Object.assign({ sandbox: mode === 'sandbox' }, cred));
-  const sent = await client.submit(p.info, p.main, p.extras);
+  const sent = await client.submit(p.info, p.main, extras);
   const entry = { time: new Date().toISOString(), mode, token: sent.token, reportCode: p.info.reportCode, undertakingCode: p.info.undertakingCode,
-    period: p.info.period, file: path.resolve(file), sha256: p.sha256 };
+    period: p.info.period, file: path.resolve(file), sha256: p.sha256, attachments: extras.map((x) => x.name) };
   remember(entry);
   say('Sent. Submission token: ' + sent.token);
   const line = certificateLine(client);
@@ -421,10 +426,10 @@ async function ui(o) {
         if (mode === 'production' && b.confirm !== String(b.period)) throw new Error('Type the period exactly to confirm a real submission.');
         const main = { name: path.basename(String(b.fileName || 'report.xml')), data: Buffer.from(String(b.data || ''), 'base64') };
         if (!main.data.length) throw new Error('The file is empty.');
-        const extras = (b.attachments || []).map((x) => ({ name: path.basename(String(x.name)), data: Buffer.from(String(x.data || ''), 'base64') }));
+        const extras = (mode === 'production' ? b.attachments || [] : []).map((x) => ({ name: path.basename(String(x.name)), data: Buffer.from(String(x.data || ''), 'base64') }));
         const sent = await clients[mode].submit(info, main, extras);
         const entry = { time: new Date().toISOString(), mode, token: sent.token, reportCode: sent.reportInfo.reportCode, undertakingCode: sent.reportInfo.undertakingCode,
-          period: sent.reportInfo.period, file: main.name, sha256: crypto.createHash('sha256').update(main.data).digest('hex') };
+          period: sent.reportInfo.period, file: main.name, sha256: crypto.createHash('sha256').update(main.data).digest('hex'), attachments: extras.map((x) => x.name) };
         remember(entry);
         say(entry.time.slice(11, 19) + '  sent to ' + mode + ': ' + entry.reportCode + ' ' + entry.period + '  token ' + entry.token);
         json(res, 200, entry);

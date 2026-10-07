@@ -113,7 +113,9 @@ It then opens the validator at `http://127.0.0.1:8777/` with a **Send to the BSP
 
 1. Open the `.xml` file. It is checked as usual, and report code, bank code and period are filled in from it.
 2. **Send to sandbox**. The panel shows the BSP's validation status and offers its result as PDF, XML and Excel.
-3. **Submit to the BSP...**, type the period, **Submit for real**. If this tool found errors, you must tick a box to submit anyway.
+3. **Submit to the BSP...**, choose the files that go with the report (the signed Control Prooflist PDF, a certification form), type the period,
+   **Submit for real**. Nothing is attached by itself: with no file chosen you must tick "Submit without any additional file",
+   and if this tool found errors you must tick a box to submit anyway. The sandbox gets the report file alone.
 
 Keep the black window open while you work; closing it stops the page. A list of what was sent from this PC stays under the panel, so a result can be fetched again later.
 
@@ -128,7 +130,8 @@ node submit.js status  <token>
 node submit.js result  <token> [--kind pdf|xml|json|excel|receipt|all]
 node submit.js history
 
-  --attach FILE     an additional file to send along (repeatable)
+  --attach FILE     a file to file with the report, such as the signed Control Prooflist PDF (repeatable;
+                    real submission only, the sandbox takes the report file alone)
   --period P        the period as the BSP writes it: 2026-03 for a month, 2026-09-18_09-24 for a week
   --report CODE  --code BANKCODE    when they cannot be read off the file
   --out DIR         where the BSP's answers are saved (default: next to the file)

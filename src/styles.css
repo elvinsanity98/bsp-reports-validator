@@ -282,6 +282,8 @@ table.grid { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .btn.danger { background: var(--error); border-color: var(--error); color: var(--surface); }
 .btn.danger:hover { color: var(--surface); filter: brightness(1.08); }
 .linkbtn { display: inline-flex; align-items: center; text-decoration: none; }
+.attach { flex-basis: 100%; }
+.attach-list { margin: 6px 0 2px; }
 .send-log { margin-top: 12px; }
 .send-log p { margin-top: 4px; overflow-wrap: anywhere; }
 .send-log .fail { margin-top: 8px; }

@@ -142,11 +142,21 @@ module.exports = function (test) {
       const before = Object.keys(bsp.submissions).length;
       r = await cli(['submit', wrr].concat(common), env, 'yes\n');
       assert.ok(r.code === 2 && /Not confirmed. Nothing was sent/.test(r.out), r.out);
+      assert.ok(/NO additional file/.test(r.out), 'a real submission with no prooflist says so before asking: ' + r.out);
       assert.strictEqual(Object.keys(bsp.submissions).length, before, 'nothing reached the server');
-      r = await cli(['submit', wrr, '--no-wait'].concat(common), env, '2026-09-18_09-24\n');
-      assert.ok(r.code === 0 && /REAL SUBMISSION/.test(r.out), r.out);
+      // prooflists go with the real submission; the sandbox gets the report file alone
+      const proof = path.join(home, 'WRR-Control Prooflist.pdf');
+      fs.writeFileSync(proof, '%PDF-1.4 test prooflist');
+      r = await cli(['sandbox', wrr, '--attach', proof, '--no-wait'].concat(common), env);
+      assert.ok(r.code === 0 && /takes the report file only/.test(r.out), r.out);
+      assert.strictEqual(bsp.submissions[/token: ([0-9a-f-]{36})/.exec(r.out)[1]].files.length, 1);
+      r = await cli(['submit', wrr, '--attach', proof, '--no-wait'].concat(common), env, '2026-09-18_09-24\n');
+      assert.ok(r.code === 0 && /REAL SUBMISSION/.test(r.out) && /With    WRR-Control Prooflist.pdf/.test(r.out), r.out);
       const realToken = /token: ([0-9a-f-]{36})/.exec(r.out)[1];
       assert.strictEqual(bsp.submissions[realToken].mode, 'production');
+      assert.deepStrictEqual(bsp.submissions[realToken].files.map((f) => f.name + ':' + f.filename), ['file:WRR_RCB_RB0001_2026-09-18.xml', 'file1:WRR-Control Prooflist.pdf']);
+      assert.deepStrictEqual(bsp.submissions[realToken].info.additionalFiles, [{ filename: 'WRR-Control Prooflist.pdf' }]);
+      assert.strictEqual(bsp.submissions[realToken].files[1].data.toString(), '%PDF-1.4 test prooflist');
       r = await cli(['history'], env);
       assert.ok(r.out.includes(token) && r.out.includes(realToken) && /production/.test(r.out), r.out);
       r = await cli(['status', realToken].concat(common), env);
@@ -181,12 +191,14 @@ module.exports = function (test) {
         const info = await get('/local/info');
         assert.strictEqual(info.body.certificate.subject.OU, '0000001');
         assert.ok(info.body.history.some((h) => h.token === realToken));
-        const body = { fileName: 'w.xml', data: fs.readFileSync(wrr).toString('base64'), reportCode: 'WRR_RCB', undertakingCode: 'RB0001', period: '2026-09-18_09-24' };
+        const body = { fileName: 'w.xml', data: fs.readFileSync(wrr).toString('base64'), reportCode: 'WRR_RCB', undertakingCode: 'RB0001', period: '2026-09-18_09-24',
+          attachments: [{ name: 'proof.pdf', data: Buffer.from('%PDF proof').toString('base64') }] };
         let sent = await post(Object.assign({ mode: 'production' }, body));
         assert.ok(sent.status === 400 && /Type the period/.test(sent.body.error), JSON.stringify(sent));
         sent = await post(Object.assign({ mode: 'sandbox' }, body));
         assert.strictEqual(sent.status, 200, JSON.stringify(sent));
         assert.strictEqual(bsp.submissions[sent.body.token].mode, 'sandbox');
+        assert.strictEqual(bsp.submissions[sent.body.token].files.length, 1, 'the sandbox gets the report file alone');
         await get('/local/status?token=' + sent.body.token);
         const st = await get('/local/status?token=' + sent.body.token);
         assert.ok(st.body.settled && st.body.status.validationStatus === 'Valid');
@@ -194,6 +206,8 @@ module.exports = function (test) {
         assert.ok(file.status === 200 && /SandboxProcessingResult-RB0001-WRR_RCB/.test(file.headers.get('content-disposition')));
         sent = await post(Object.assign({ mode: 'production', confirm: '2026-09-18_09-24' }, body));
         assert.strictEqual(bsp.submissions[sent.body.token].mode, 'production');
+        assert.deepStrictEqual(bsp.submissions[sent.body.token].files.map((f) => f.filename), ['w.xml', 'proof.pdf']);
+        assert.deepStrictEqual(sent.body.attachments, ['proof.pdf']);
       } finally {
         ui.kill();
       }

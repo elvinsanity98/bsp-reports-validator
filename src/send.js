@@ -60,6 +60,8 @@
           '  token ', h('code', null, entry.token)));
         logBox.appendChild(h('p', null, 'Validation: ', h('strong', null, st.validationStatus || 'waiting'),
           ' | Authorization: ' + (st.autohorizationStatus || '-') + ' | After authorization: ' + (st.postAuthoriozationStatus || '-')));
+        if (entry.attachments && entry.attachments.length) logBox.appendChild(h('p', null, 'Sent with: ' + entry.attachments.join(', ')));
+        else if (entry.mode === 'production' && entry.attachments) logBox.appendChild(h('p', null, 'Sent with no additional file.'));
         var files = h('div', { class: 'row' });
         [['pdf', 'Result (PDF)', f.resultPdf], ['xml', 'Result (XML)', f.resultXml], ['excel', 'Excel view', f.resultExcel], ['receipt', 'Receipt', f.confirmationPdf]].forEach(function (k) {
           if (!k[2]) return;
@@ -117,15 +119,15 @@
       card.appendChild(h('div', { class: 'row' },
         h('label', { class: 'field' }, 'Report code', fReport),
         h('label', { class: 'field' }, 'Bank code', fBank),
-        h('label', { class: 'field' }, 'Period', fPeriod),
-        h('label', { class: 'field grow' }, 'Additional files (optional)', fAttach)));
+        h('label', { class: 'field' }, 'Period', fPeriod)));
 
       var busy = false;
       var send = function (mode, confirm) {
         if (busy) return;
         busy = true;
         B.app.clear(logBox).appendChild(h('p', { class: 'muted' }, 'Sending ' + input.name + (mode === 'sandbox' ? ' to the sandbox...' : ' to the BSP...')));
-        Promise.all(Array.prototype.map.call(fAttach.files, function (f) {
+        // The sandbox takes the report file only, as in the BSP's own sandbox collection.
+        Promise.all(Array.prototype.map.call(mode === 'production' ? fAttach.files : [], function (f) {
           return f.arrayBuffer().then(function (buf) { return { name: f.name, data: base64(new Uint8Array(buf)) }; });
         })).then(function (attachments) {
           return call('/local/send', {
@@ -146,12 +148,24 @@
       var realRow = h('div', { class: 'row realrow', hidden: true });
       var fConfirm = h('input', { type: 'text', spellcheck: 'false', autocomplete: 'off' });
       var fForce = h('input', { type: 'checkbox' });
+      var fNone = h('input', { type: 'checkbox' });
+      var chosen = h('p', { class: 'muted attach-list' }, 'No file chosen yet.');
+      fAttach.addEventListener('change', function () {
+        var names = Array.prototype.map.call(fAttach.files, function (f) { return f.name + ' (' + Math.max(1, Math.round(f.size / 1024)).toLocaleString('en-US') + ' KB)'; });
+        chosen.textContent = names.length ? 'Will be sent with the report: ' + names.join(', ') + '.' : 'No file chosen yet.';
+      });
+      realRow.appendChild(h('div', { class: 'attach' },
+        h('label', { class: 'field' }, 'Files to file with the report: the signed Control Prooflist PDF, a certification form', fAttach),
+        chosen,
+        h('label', { class: 'check inline' }, fNone, h('span', null, 'Submit without any additional file'))));
       realRow.appendChild(h('label', { class: 'field' }, 'Type the period to confirm the real submission', fConfirm));
       if (errors) realRow.appendChild(h('label', { class: 'check inline' }, fForce, h('span', null, 'Submit although ' + errors + ' error(s) were found here')));
       realRow.appendChild(h('button', {
         class: 'btn danger', type: 'button',
         onclick: function () {
           if (errors && !fForce.checked) { B.app.clear(logBox).appendChild(h('p', { class: 'fail' }, 'Errors were found in this file. Fix them, or tick the box to submit anyway.')); return; }
+          if (!fAttach.files.length && !fNone.checked) { B.app.clear(logBox).appendChild(h('p', { class: 'fail' }, 'No prooflist or other file is attached. Choose the PDF(s), or tick "Submit without any additional file".')); return; }
+          if (fAttach.files.length && fNone.checked) { B.app.clear(logBox).appendChild(h('p', { class: 'fail' }, 'Files are chosen, but "Submit without any additional file" is ticked. Untick it, or remove the files.')); return; }
           if (fConfirm.value.trim() !== fPeriod.value.trim() || !fPeriod.value.trim()) { B.app.clear(logBox).appendChild(h('p', { class: 'fail' }, 'Type the period exactly as shown above to confirm.')); return; }
           send('production', fConfirm.value.trim());
         }
@@ -160,7 +174,7 @@
       card.appendChild(h('div', { class: 'row sendbuttons' },
         h('button', { class: 'btn primary', type: 'button', onclick: function () { send('sandbox'); } }, 'Send to sandbox'),
         h('button', { class: 'btn', type: 'button', onclick: function () { realRow.hidden = !realRow.hidden; } }, 'Submit to the BSP...'),
-        h('span', { class: 'muted' }, 'The sandbox validates the file at the BSP without filing it.')));
+        h('span', { class: 'muted' }, 'The sandbox validates the report file at the BSP without filing it. Prooflists go with the real submission.')));
       card.appendChild(realRow);
     }
     card.appendChild(logBox);
