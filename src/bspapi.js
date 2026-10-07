@@ -216,7 +216,7 @@ async function missingIntermediates(host, port, extraCa) {
   const handshake = (verify) => new Promise((resolve, reject) => {
     const s = tls.connect({
       host, port: port || 443, servername: host, timeout: 20000,
-      rejectUnauthorized: verify, ca: tls.rootCertificates.concat(extraCa || [])
+      rejectUnauthorized: verify, ca: tls.rootCertificates.concat(extraCa || [], found)
     }, () => { const c = s.getPeerCertificate(true); s.end(); resolve(c); });
     s.on('timeout', () => s.destroy(new Error('timed out')));
     s.on('error', reject);
@@ -239,8 +239,19 @@ async function missingIntermediates(host, port, extraCa) {
         res.on('end', () => resolve(Buffer.concat(chunks)));
       }).on('error', reject);
     });
-    const cert = new crypto.X509Certificate(der);
+    let cert;
+    try {
+      cert = new crypto.X509Certificate(der);
+    } catch (e) {
+      break;       // not a single certificate (the last hop is often a bundle of roots, which Node has already)
+    }
     found.push(cert.toString());
+    try {
+      await handshake(true);
+      break;       // the chain is complete; nothing further up is needed
+    } catch (e) {
+      if (!/UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT/.test(e.code || '')) throw new Error(explain(e));
+    }
     if (cert.subject === cert.issuer) break;
     url = (/CA Issuers - URI:(\S+)/.exec(cert.infoAccess || '') || [])[1];
   }

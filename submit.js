@@ -133,22 +133,49 @@ function relaunchForOldPfx(pfx) {
   process.exit(r.status === null ? 1 : r.status);
 }
 
+// When a folder is given instead of the certificate file, offers the .pfx
+// files in it, newest first. Returns the path of one file.
+async function pickPfx(given) {
+  let isFolder = false;
+  try { isFolder = fs.statSync(given).isDirectory(); } catch (e) { return given; }
+  if (!isFolder) return given;
+  const files = fs.readdirSync(given).filter((n) => /\.(pfx|p12)$/i.test(n))
+    .map((n) => ({ name: n, time: fs.statSync(path.join(given, n)).mtime }))
+    .sort((a, b) => b.time - a.time);
+  if (!files.length) throw new Error('There is no .pfx file in the folder ' + given + '. Set the certificate with: node submit.js setup --pfx "<path to the .pfx>"');
+  let pick = 0;
+  if (files.length > 1 && process.stdin.isTTY) {
+    process.stderr.write('That is a folder. The certificate files in it, newest first:\n');
+    files.forEach((f, i) => process.stderr.write('  ' + (i + 1) + '. ' + f.name + '  (' + f.time.toISOString().slice(0, 10) + ')\n'));
+    const answer = await ask('Which one? Type its number, or press Enter for 1: ');
+    pick = answer === '' ? 0 : Number(answer) - 1;
+    if (!Number.isInteger(pick) || pick < 0 || pick >= files.length) throw new Error('"' + answer + '" is not one of the numbers shown.');
+  }
+  return path.join(given, files[pick].name);
+}
+
 // Loads the certificate, asks for its password and makes sure the BSP's own
 // server certificate can be verified. Returns what a client needs.
 async function credentials(o) {
   const cfg = readConfig();
+  const fromSettings = !o.pfx && !process.env.BSP_PFX;
   let pfxPath = o.pfx || process.env.BSP_PFX || cfg.pfx;
   if (!pfxPath && process.stdin.isTTY) {
     // first run: ask once where the certificate is and remember the place
-    pfxPath = path.resolve((await ask('Where is the bank\'s certificate file (.pfx)? Type or paste its path: ')).replace(/^"|"$/g, ''));
-    if (fs.existsSync(pfxPath)) {
-      fs.mkdirSync(DIR, { recursive: true });
-      fs.writeFileSync(CONFIG, JSON.stringify(Object.assign(cfg, { pfx: pfxPath }), null, 2));
-    }
+    pfxPath = (await ask('Where is the bank\'s certificate (.pfx)? Type or paste the file, or the folder it is in: ')).replace(/^"|"$/g, '');
   }
   if (!pfxPath) throw new Error('No certificate set. Run: node submit.js setup --pfx "<path to the bank\'s .pfx file>"');
+  pfxPath = await pickPfx(path.resolve(pfxPath));
   let pfx;
-  try { pfx = fs.readFileSync(pfxPath); } catch (e) { throw new Error('Cannot read the certificate file ' + pfxPath + ' (' + e.code + ').'); }
+  try {
+    pfx = fs.readFileSync(pfxPath);
+  } catch (e) {
+    throw new Error('Cannot read the certificate file ' + pfxPath + ' (' + e.code + '). Set it again with: node submit.js setup --pfx "<path to the .pfx>"');
+  }
+  if (fromSettings && cfg.pfx !== pfxPath) {
+    fs.mkdirSync(DIR, { recursive: true });
+    fs.writeFileSync(CONFIG, JSON.stringify(Object.assign(cfg, { pfx: pfxPath }), null, 2));
+  }
   relaunchForOldPfx(pfx);
   const passphrase = process.env.BSP_PFX_PASSWORD !== undefined ? process.env.BSP_PFX_PASSWORD
     : await askHidden('Password of ' + path.basename(pfxPath) + ': ');
@@ -301,10 +328,10 @@ async function main() {
   const cmd = o._[0];
   if (cmd === 'setup') {
     const cfg = readConfig();
-    if (o.pfx) cfg.pfx = path.resolve(o.pfx);
+    if (o.pfx) cfg.pfx = await pickPfx(path.resolve(o.pfx));
     if (o.ca.length) cfg.ca = o.ca.map((f) => path.resolve(f));
     if (!cfg.pfx) throw new Error('Give the certificate: node submit.js setup --pfx "<path to the .pfx>"');
-    if (!fs.existsSync(cfg.pfx)) throw new Error('There is no file at ' + cfg.pfx);
+    if (!fs.existsSync(cfg.pfx) || !fs.statSync(cfg.pfx).isFile()) throw new Error('There is no certificate file at ' + cfg.pfx);
     fs.mkdirSync(DIR, { recursive: true });
     fs.writeFileSync(CONFIG, JSON.stringify(cfg, null, 2));
     say('Saved in ' + CONFIG + '\n  certificate: ' + cfg.pfx + '\nThe password is not stored. Next: node submit.js cert');

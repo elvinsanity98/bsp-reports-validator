@@ -105,6 +105,18 @@ module.exports = function (test) {
       r = await cli(['cert'].concat(common), env);
       assert.ok(r.code === 0 && /accepted the certificate/.test(r.out) && /Test Bank, 0000001/.test(r.out), r.out);
 
+      // the folder of the certificate may be given instead of the file
+      const viaSettings = Object.assign({}, env, { BSP_PFX: '' });
+      r = await cli(['setup', '--pfx', certs.dir], viaSettings);
+      assert.ok(r.code === 0 && /client\.pfx/.test(r.out), r.out);
+      assert.strictEqual(JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8')).pfx, certs.pfx);
+      fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ pfx: certs.dir }));     // a folder saved by an older version
+      r = await cli(['cert'].concat(common), viaSettings);
+      assert.ok(r.code === 0 && /accepted the certificate/.test(r.out), r.out);
+      assert.strictEqual(JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8')).pfx, certs.pfx, 'the setting repairs itself');
+      r = await cli(['setup', '--pfx', home], viaSettings);
+      assert.ok(r.code === 2 && /no \.pfx file in the folder/.test(r.out), r.out);
+
       const wrr = path.join(ROOT, 'samples', 'clean', 'WRR_RCB_RB0001_2026-09-18.xml');
       r = await cli(['sandbox', wrr].concat(common), env);
       assert.strictEqual(r.code, 0, r.out);
