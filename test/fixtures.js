@@ -39,6 +39,16 @@ function buildXml(spec, opts) {
   return out.join('\n');
 }
 
+// Every schedule and table the schema itself requires, empty: { FORM: { TABLE: {} or [] } }.
+function skeleton(spec) {
+  const forms = {};
+  spec.forms.filter((f) => f.r).forEach((f) => {
+    forms[f.n] = {};
+    f.tb.filter((t) => t.r).forEach((t) => { forms[f.n][t.n] = t.k === 'S' ? {} : []; });
+  });
+  return forms;
+}
+
 // The schedules the rules require for a period and bank profile.
 function requiredForms(spec, period, profile, year) {
   const doc = ENGINE.readXml(buildXml(spec, { period, year: year || 2026 }), spec);
@@ -110,4 +120,4 @@ function makeXlsx(sheets, deflate) {
   return zip(files, deflate);
 }
 
-module.exports = { RB, buildXml, requiredForms, makeXlsx, zip };
+module.exports = { RB, buildXml, skeleton, requiredForms, makeXlsx, zip };

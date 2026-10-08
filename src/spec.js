@@ -1,6 +1,6 @@
 // Unpacks the compiled report definitions (src/spec-<report>.js) and indexes them.
 //
-//   BSPV.spec.list()                  -> [{ report, version, title, root, ns, sheets }]
+//   BSPV.spec.list()                  -> [{ report, version, title, root, ns, sheets, periodStyle }]
 //   BSPV.spec.load('WRR_RCB')         -> Promise of the full definition
 //   BSPV.spec.detectXmlText(text)     -> report code of an XML file, by its root element
 //   BSPV.spec.detectSheets([names])   -> report code of an Excel template, by its sheet names
@@ -38,7 +38,7 @@
     var specs = registry();
     return Object.keys(specs).sort().map(function (k) {
       var s = specs[k];
-      return { report: s.report, version: s.version, title: s.title, root: s.root, ns: s.ns, sheets: s.sheets };
+      return { report: s.report, version: s.version, title: s.title, root: s.root, ns: s.ns, sheets: s.sheets, periodStyle: s.periodStyle || '' };
     });
   }
 

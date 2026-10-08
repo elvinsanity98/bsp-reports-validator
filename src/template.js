@@ -191,7 +191,7 @@
       }
     });
 
-    var matched = 0;
+    var matched = 0, strange = [];
     book.sheets.forEach(function (sheet) {
       var form = spec.formByName[sheet.name.trim()];
       if (!form || !form.x) return;
@@ -229,6 +229,7 @@
         else if (form.z && form.z.f === name) marks.push({ row: rn, field: [form.z.f, form.z.ty, form.z.t] });
       });
 
+      if (!marks.length) strange.push(sheet.name);
       marks.forEach(function (mark, mi) {
         var end = mi + 1 < marks.length ? marks[mi + 1].row - 1 : lastRow;
         if (mark.field) {
@@ -350,7 +351,14 @@
         if (items.length) inst.tables[table.n] = { items: items };
       });
 
-      if (filled) doc.forms[form.n] = [inst];
+      // A schedule the schema requires is part of every file, so its sheet is
+      // read as filed even when it is nil; so are its required tables.
+      if (form.r) {
+        form.tb.forEach(function (t) {
+          if (t.r && !inst.tables[t.n]) inst.tables[t.n] = t.k === 'S' ? { cells: {} } : { items: [] };
+        });
+      }
+      if (filled || form.r) doc.forms[form.n] = [inst];
     });
 
     if (!matched) {
@@ -359,6 +367,11 @@
         names.slice(0, 2).join(', ') + (names.length > 2 ? ', ...' : '') + '). ' +
         'Use the BSP input template for ' + spec.report + ' version ' + spec.version + ' and keep its sheet names.');
       doc.fatal = true;
+    } else if (strange.length) {
+      add('error', 'TPL-LAYOUT', (strange.length === matched ? 'This workbook has' : 'Sheet ' + strange.slice(0, 4).join(', ') + (strange.length > 4 ? ' and others have' : strange.length > 1 ? ' have' : ' has')) +
+        ' the sheet name of a ' + spec.report + ' schedule but not the layout of the BSP input template (no table name such as MAIN in column A). ' +
+        'This tool reads the input template you fill in, not the Excel view the BSP sends back and not the specification workbook.');
+      if (strange.length === matched) doc.fatal = true; else ENGINE.required(spec, doc, null);
     } else {
       ENGINE.required(spec, doc, null);
     }

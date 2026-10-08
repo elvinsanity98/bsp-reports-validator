@@ -5,6 +5,7 @@ It reads the file on your own computer and reports what the BSP's validation wou
 
 | Report | Version | BSP name |
 | --- | --- | --- |
+| `AFRD` | 1.0 | AFRD Financing (Mandatory Agriculture, Fisheries and Rural Development Financing) |
 | `FRP_S` | 15.0 | Simplified FRP and FRP Related Reports |
 | `WRR_RCB` | 1.0 | Weekly Reserves Report for Rural and Cooperative Banks |
 
@@ -30,7 +31,7 @@ The tool recognises which report a file is, from the root element of the XML or 
    (amounts with at most 2 decimals and no commas, whole numbers, code lists, dates, text lengths). The BSP reports these as `XSD-0001`.
 2. **Conditional cells** (`COND-0001`): a value in a cell whose condition is false, for example a column the report does not use
    or a line meant for another type of bank. The BSP rejects it with the same code.
-3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S, 5 for WRR_RCB).
+3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S, 64 for AFRD, 5 for WRR_RCB).
    - `REQ-` schedules that must, or must not, be submitted for the period and bank type
    - `STG1-` checks on single cells and groups of cells
    - `RIN-` reconciliations inside a schedule and between schedules, each with its tolerance
@@ -55,6 +56,7 @@ Some rules depend on facts the BSP holds about the bank. Set them under **Bank p
 - Bank type (RB, TB, UKB, DB) and, for a bank subsidiary, the parent's type
 - Trust authority, e-money issuer, domestic bank
 - Number of banking offices (used by "all branches need to be reported")
+- Number of bank subsidiaries that report with the bank (AFRD: decides whether schedule AFRD_D may be sent)
 - Branch list, one office per line: `branch code, region code, location code` (used by the BRIS regional totals)
 
 A rule or conditional cell that needs a fact left blank is counted as **not checked**. It never produces a finding.
@@ -74,11 +76,12 @@ node cli.js <file.xml | file.zip | template.xlsx> [options]
   --bank RB|TB|UKB|DB      bank type
   --parent UKB|DB|TB|RB    parent bank type, for a bank subsidiary
   --offices N              number of banking offices
+  --subsidiaries N         number of bank subsidiaries reporting with the bank (AFRD)
   --trust  --emi           has trust authority / is an e-money issuer
   --foreign                branch of a foreign bank
   --branches FILE          CSV of: branch code, region code, location code
   --code X                 bank code, for the Excel template only
-  --year Y --month M       period of a monthly report, for the Excel template only
+  --year Y --month M       period of a monthly report, for the Excel template only (AFRD: --month is the quarter, 1 to 4)
   --from DATE --to DATE    period of a weekly report, for the Excel template only (YYYY-MM-DD)
   --report CODE            which report the file is, when the file cannot say
   --prior FILE             an earlier period's XML (repeatable)
@@ -91,6 +94,7 @@ Exit code 0 = no errors, 1 = errors found, 2 = could not run.
 ```
 node cli.js samples/clean/FRP_S_RB0001_2026-03.xml --bank RB --offices 2 --branches samples/branches.csv
 node cli.js samples/clean/WRR_RCB_RB0001_2026-09-18.xml --bank RB
+node cli.js samples/clean/AFRD_RB0001_2026-2.xml --bank RB --subsidiaries 0
 node cli.js samples/with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml --bank RB
 ```
 
@@ -143,7 +147,9 @@ node submit.js history
 `SandboxProcessingResult-<bank>-<report>-<period>-<token>.pdf`, `ProcessingResult-...pdf`, `Receipt-...pdf`.
 Exit code 0 = accepted as valid, 1 = the BSP found the file invalid, 2 = not sent or could not run.
 
-A file for a report this tool has no rules for can be sent too; give `--period`, because the file does not say whether its period is a month (`2026-03`) or a quarter (`2026-1`).
+The period is written the way the BSP writes it for each report: `2026-03` for FRP_S (a month), `2026-2` for AFRD (a quarter, no leading zero),
+`2026-09-18_09-24` for WRR_RCB (a week). A file for a report this tool has no rules for can be sent too; give `--period`, because the file does not say
+whether its period is a month or a quarter.
 
 ### What it does with the certificate
 
@@ -185,6 +191,16 @@ The tool was compared with the BSP's own processing results for the past submiss
 - A file with no Header is rejected by both.
 - The values the BSP rejected in the other two attempts (`...8399999` and the like) are found in the workbooks of those weeks and are reported.
 
+**AFRD**, 15 processing results from December 2023 to July 2026:
+
+- 9 accepted submissions filed from July 2024 on: the tool reports nothing on any of them.
+- 1 rejected sandbox attempt whose file was kept: the tool reports the same three failed rules as the BSP, with the same values.
+- 4 accepted submissions for 2023 periods: the tool reports `REQ-AFRD_D-2` on them (and on the sandbox attempt above). Those files carry
+  schedule AFRD_D holding a single zero, which today's rules do not allow for a bank without subsidiaries. The bank's later files leave AFRD_D out.
+  Either the rule came later, or the BSP treats such a schedule as not submitted; the published files do not say which.
+- 1 rejected sandbox attempt whose file was not kept, so nothing could be compared.
+- Values read from three filled Excel templates equal the values in the XML filed for the same quarter (44 of 45 cells; the one difference was edited in between).
+
 This is evidence from one bank that files only a part of the schedules (no trust, e-money, FCDU or foreign-office business).
 Rules that this bank's data never exercises are untested against the BSP.
 
@@ -193,7 +209,10 @@ Rules that this bank's data never exercises are untested against the BSP.
 - **Conditional cells with a zero.** The BSP rejected non-zero values in conditional cells. Whether a reported `0` is also rejected is not known,
   because no past file had one; the tool reports a zero there as a warning.
 - **Empty sheets in the Excel template.** A sheet with no values is treated as a schedule that was not submitted,
-  and "required schedule not submitted" is then a warning rather than an error.
+  and "required schedule not submitted" is then a warning rather than an error. The exception is a schedule the schema itself
+  requires in every file (all of AFRD, and WRR): its sheet counts as filed even when nil, because the XML must carry it either way.
+- **Workbooks that only look like the template.** The Excel view the BSP sends back and the specification workbook use the same
+  sheet names. They are refused (`TPL-LAYOUT`) instead of being read as an empty template.
 - **Blank cells count as zero** in every calculation and comparison.
 - **Derived schedules** (FRPTI_B, FRPTI_C, FRPTI_D, FRPTI_E1, FRPTI_E2, MLR_I, MSME_MR) are built by the BSP from other schedules.
   They are treated as present when at least one of their source schedules is present.

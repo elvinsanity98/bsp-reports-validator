@@ -415,7 +415,7 @@
         doc.findings.push({
           sev: 'error', code: 'XSD-REQUIRED', kind: 'file', form: form.n, line: at ? at.line : undefined,
           msg: sheet
-            ? 'Sheet ' + form.n + ' has no values. The schema requires this schedule in every file.'
+            ? 'The workbook has no sheet named ' + form.n + '. The schema requires this schedule in every file.'
             : 'Schedule <' + form.n + '> is missing. The schema requires it in every file.'
         });
       }
@@ -1048,6 +1048,10 @@
     if (m) return 'is not used in ' + m[1];
     m = /^ISANYOF\(LOOKUP\("BANK";\s*"BNKGRP";[^)]*\);\s*(.+?)\)\s*=\s*TRUE$/.exec(text);
     if (m) return 'is only for bank type ' + m[1].replace(/"/g, '').replace(/\s*;\s*/g, ', ');
+    m = /\[Year\]\s*<\s*(\d{4})\b.*\[Period\]\s*<\s*(\d+)/.exec(text);
+    if (m) return 'is only used for periods before ' + m[1] + ' period ' + m[2];
+    m = /\[Year\]\s*>\s*(\d{4})\b.*\[Period\]\s*>=\s*(\d+)/.exec(text);
+    if (m) return 'is only used from ' + m[1] + ' period ' + m[2] + ' on';
     if (text === 'FALSE') return 'is never used';
     return 'is only used when ' + text;
   }

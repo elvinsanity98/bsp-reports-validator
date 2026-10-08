@@ -35,10 +35,11 @@ const DOWNLOADS = {
 // ---- what a file is ------------------------------------------------------------
 
 // Reads the report code, bank code and period off an XML submission file.
-// `periodSure` is false when the period had to be guessed from the header shape:
-// the BSP writes a monthly period as 2026-03 and a quarterly one as 2026-1,
-// and the file does not say which the report is.
-function describe(text, knownReports) {
+// `styles` says how each known report's period is written: { FRP_S: 'month',
+// AFRD: 'quarter', WRR_RCB: 'range' }. The BSP writes a month as 2026-03 and a
+// quarter as 2026-1, and the file does not say which the report is, so for a
+// report not listed `periodSure` is false and the period is only a guess.
+function describe(text, styles) {
   let root;
   try {
     root = XML.parse(text).root;
@@ -56,8 +57,9 @@ function describe(text, knownReports) {
     out.period = from + '_' + to.slice(5);
     out.periodSure = true;
   } else if (/^\d{4}$/.test(year) && /^\d{1,2}$/.test(month)) {
-    out.period = year + '-' + ('0' + month).slice(-2);
-    out.periodSure = (knownReports || []).indexOf(root.name) >= 0;
+    const style = (styles || {})[root.name] || '';
+    out.period = year + '-' + (style === 'quarter' ? String(Number(month)) : ('0' + month).slice(-2));
+    out.periodSure = style === 'month' || style === 'quarter';
   }
   return out;
 }

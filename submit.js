@@ -215,10 +215,11 @@ function certificateLine(client) {
 // Works out report, bank and period, and runs this tool's own check when it knows the report.
 async function prepare(file, o) {
   const data = fs.readFileSync(file);
-  const known = SPEC.list().map((s) => s.report);
+  const styles = {};
+  SPEC.list().forEach((s) => { styles[s.report] = s.periodStyle; });
   let info = { reportCode: '', undertakingCode: '', period: '', periodSure: false };
   const isXml = /\.xml$/i.test(file);
-  if (isXml) info = API.describe(ENGINE.decode(new Uint8Array(data)).text, known);
+  if (isXml) info = API.describe(ENGINE.decode(new Uint8Array(data)).text, styles);
   if (o.report) info.reportCode = o.report;
   if (o.code) info.undertakingCode = o.code;
   if (o.period) { info.period = o.period; info.periodSure = true; }
@@ -232,7 +233,7 @@ async function prepare(file, o) {
       ' but a quarter as ' + info.period.slice(0, 5) + Number(info.period.slice(5)) + '. Give it with --period, as the portal shows it.');
   }
   let check = null;
-  if (isXml && known.includes(info.reportCode)) {
+  if (isXml && styles[info.reportCode] !== undefined) {
     const spec = await SPEC.load(info.reportCode);
     const r = ENGINE.check(spec, ENGINE.readXmlBytes(new Uint8Array(data), spec), { profile: readConfig().profile || { bank: {} } });
     check = { errors: r.counts.error, warnings: r.counts.warning, first: r.findings.filter((f) => f.sev === 'error').slice(0, 5).map((f) => f.code + ': ' + f.msg) };

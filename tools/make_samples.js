@@ -81,7 +81,32 @@ function wrrBroken(spec) {
   return fx.buildXml(spec, { from: '2026-09-19', to: '2026-09-24', forms });           // week starts on a Saturday
 }
 
-Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB')]).then(([spec, wrr]) => {
+// AFRD: the schema wants every schedule and every list in the file, filled or
+// not. A rural bank with no subsidiaries files most of them empty.
+function afrdClean(afrd) {
+  const forms = fx.skeleton(afrd);
+  forms.AFRD_MRA.MAIN = { R0010C0010: '150000000.00', R0010C0030: '120000000.00', R0020C0010: '2000000.00', R0020C0030: '1500000.00' };
+  forms.AFRD_A.MAIN_A = { R0010C0010: '9000000.00', R0010C0030: '3000000.00' };
+  forms.AFRD_A1.MAIN = { R0010C0010: '120', R0010C0020: '9000000.00', R0020C0030: '40', R0020C0040: '3000000.00' };
+  forms.AFRD_B.MAIN = { R0010C0030: '500000.00' };
+  forms.AFRD_B3.MAIN_Y1 = [{ C0010: 'Rural Bank of Sample Town', C0030: '500000.00' }];
+  return forms;
+}
+
+function afrdBroken(afrd) {
+  const forms = afrdClean(afrd);
+  forms.AFRD_A1.MAIN.R0010C0020 = '8000000.00';                    // the detail no longer adds up to Schedule A
+  forms.AFRD_MRA.MAIN.R0010C0020 = '90000000.00';                  // the 2010 base column is not used from 2023 quarter 3
+  delete forms.AFRD_A2.MAIN_Y6;                                    // a list the schema requires even when it is empty
+  forms.AFRD_B1.MAIN_Y1 = [{ C0010: 'Sample Development Bank', C0040: '1,000,000.00' }];   // a comma in an amount
+  forms.AFRD_B2.MAIN_Y1 = [{ C0010: 'Sample Rural Bank', C0030: '1000' }];                 // shares with no acquisition cost
+  forms.AFRD_D = { MAIN: { R0110C0010: '0' } };                    // a schedule only for banks with subsidiaries
+  return fx.buildXml(afrd, { year: 2026, period: 2, forms });
+}
+
+Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD')]).then(([spec, wrr, afrd]) => {
+  write('clean/AFRD_RB0001_2026-2.xml', fx.buildXml(afrd, { year: 2026, period: 2, forms: afrdClean(afrd) }));
+  write('with-errors/AFRD_RB0001_2026-2_errors.xml', afrdBroken(afrd));
   write('clean/FRP_S_RB0001_2026-03.xml', fx.buildXml(spec, { period: 3, forms: quarter(spec) }));
   write('clean/FRP_S_RB0001_2026-02.xml', fx.buildXml(spec, { period: 2, forms: month() }));
   write('clean/WRR_RCB_RB0001_2026-09-18.xml', fx.buildXml(wrr, { from: '2026-09-18', to: '2026-09-24', forms: wrrClean() }));
@@ -95,6 +120,7 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB')]).then(([spec, wrr]) => {
     '  Bank type        Rural bank (RB)',
     '  Parent bank      None, or not a bank',
     '  Banking offices  2',
+    '  Bank subsidiaries  0',
     '  Domestic bank    ticked; trust authority and e-money issuer not ticked',
     '  Branch list      001, 9, 4',
     '                   002, 9, 4',
@@ -102,8 +128,10 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB')]).then(([spec, wrr]) => {
     'clean/FRP_S_RB0001_2026-03.xml         FRP quarter-end file, no findings',
     'clean/FRP_S_RB0001_2026-02.xml         FRP monthly file, no findings',
     'clean/WRR_RCB_RB0001_2026-09-18.xml    weekly reserves report, no findings',
+    'clean/AFRD_RB0001_2026-2.xml           AFRD financing report for a quarter, no findings (profile: no subsidiaries)',
     'with-errors/FRP_S_RB0001_2026-03_errors.xml       schema errors, a missing schedule, failed reconciliations',
     'with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml  bad amounts, a thrift-bank line, an unnamed "others" line, a wrong week',
+    'with-errors/AFRD_RB0001_2026-2_errors.xml         a missing list, a comma, a retired column, totals that do not agree',
     'with-errors/not-well-formed.xml        a closing tag that does not match',
     '',
     'All figures are made up. The page recognises which report a file is.',
@@ -111,6 +139,7 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB')]).then(([spec, wrr]) => {
     'From the command line:',
     '  node cli.js samples/clean/FRP_S_RB0001_2026-03.xml --bank RB --offices 2 --branches samples/branches.csv',
     '  node cli.js samples/clean/WRR_RCB_RB0001_2026-09-18.xml --bank RB',
+    '  node cli.js samples/clean/AFRD_RB0001_2026-2.xml --bank RB --subsidiaries 0',
     ''
   ].join('\r\n'));
   write('branches.csv', '001,9,4\r\n002,9,4\r\n');

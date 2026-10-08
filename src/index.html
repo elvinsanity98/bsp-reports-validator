@@ -69,6 +69,9 @@
           <label class="field" data-need="BRANCHCOUNT DOMESTICBRANCHCOUNT">Banking offices <small>head office and branches</small>
             <input type="number" id="p-branches" min="0" step="1" placeholder="not set">
           </label>
+          <label class="field" data-need="SUBSIDIARYCOUNT">Bank subsidiaries <small>reporting with this bank</small>
+            <input type="number" id="p-subsidiaries" min="0" step="1" placeholder="not set">
+          </label>
         </div>
         <div class="row checks">
           <label class="check" data-need="ISDOMESTIC"><input type="checkbox" id="p-domestic" checked><span>Domestic bank <small>not a branch of a foreign bank</small></span></label>
@@ -173,6 +176,7 @@
     a file that passes here can still be rejected. Rules: <span id="spec-source"></span>.</p>
 </footer>
 
+<script src="spec-afrd.js"></script>
 <script src="spec-frp_s.js"></script>
 <script src="spec-wrr_rcb.js"></script>
 <script src="xml.js"></script>

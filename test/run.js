@@ -11,7 +11,7 @@ const fx = require('./fixtures.js');
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
-let spec, wrr;
+let spec, wrr, afrd;
 
 const codes = (r) => r.findings.map((f) => f.code);
 const has = (r, code) => codes(r).includes(code);
@@ -372,7 +372,7 @@ const checkWrr = (xml, bank) => ENGINE.check(wrr, ENGINE.readXml(xml, wrr), { pr
 const week = (row, amount) => ({ [row + 'C0020']: amount, [row + 'C0050']: amount, [row + 'C0060']: amount, [row + 'C0070']: amount, [row + 'C0080']: amount });
 
 test('reports: each file says which report it is', () => {
-  assert.deepStrictEqual(SPEC.list().map((r) => r.report), ['FRP_S', 'WRR_RCB']);
+  assert.deepStrictEqual(SPEC.list().map((r) => r.report + ':' + r.periodStyle), ['AFRD:quarter', 'FRP_S:month', 'WRR_RCB:range']);
   assert.strictEqual(SPEC.detectXmlText(sample('clean/WRR_RCB_RB0001_2026-09-18.xml')), 'WRR_RCB');
   assert.strictEqual(SPEC.detectXmlText(sample('clean/FRP_S_RB0001_2026-02.xml')), 'FRP_S');
   assert.strictEqual(SPEC.detectXmlText(sample('with-errors/not-well-formed.xml')), 'FRP_S', 'works on a broken file too');
@@ -470,7 +470,10 @@ test('WRR: the Excel template', async () => {
   const r = ENGINE.check(wrr, doc, { profile: { bank: { BNKGRP: 'RB' } } });
   assert.deepStrictEqual(r.findings.filter((f) => f.kind !== 'file').map((f) => f.code), []);
   const empty = TEMPLATE.readTemplate(await TEMPLATE.readWorkbook(fx.makeXlsx({ WRR: { A1: 'WRR', A4: 'MAIN', F7: 'C0020', D9: 'R0020' } })), wrr, header);
-  assert.ok(empty.findings.some((f) => f.code === 'XSD-REQUIRED' && /Sheet WRR has no values/.test(f.msg)));
+  assert.deepStrictEqual(empty.findings.map((f) => f.code), [], 'a required schedule with a nil sheet is still part of the file');
+  assert.ok(empty.forms.WRR[0].tables.MAIN, 'and so is its required table');
+  const lookalike = TEMPLATE.readTemplate(await TEMPLATE.readWorkbook(fx.makeXlsx({ WRR: { A1: 'Weekly Reserves Report', B3: 'Friday', C3: 1 } })), wrr, header);
+  assert.ok(lookalike.fatal && lookalike.findings.some((f) => f.code === 'TPL-LAYOUT'), 'the right sheet name with another layout is refused, not read as empty');
 });
 
 test('value formats: decimals count the value unless a pattern says how to write it', () => {
@@ -479,6 +482,79 @@ test('value formats: decimals count the value unless a pattern says how to write
   assert.ok(/more than 2 decimal/.test(ENGINE.checkValue(loose, '1.505').err));
   assert.ok(/more than 2 decimal/.test(ENGINE.checkValue(amount, '1.500').err));
   assert.ok(/more than 2 decimal/.test(ENGINE.checkValue(amount, '98358232.8399999').err));
+});
+
+// ---- AFRD ----------------------------------------------------------------------
+
+const NO_SUBS = { bank: { BNKGRP: 'RB', PARENTBNKGRP: 'NONE', SUBSIDIARYCOUNT: 0 } };
+const checkAfrd = (xml, profile) => ENGINE.check(afrd, ENGINE.readXml(xml, afrd), { profile: profile || NO_SUBS });
+
+test('AFRD: samples', () => {
+  let r = checkAfrd(sample('clean/AFRD_RB0001_2026-2.xml'));
+  assert.deepStrictEqual(r.findings.map((f) => f.code + ' ' + f.msg), []);
+  assert.ok(r.stats.passed > 50, String(r.stats.passed));
+  const ev = r.evaluator;
+  assert.strictEqual(ev.valueOf('AFRD_MRA', 'MAIN', 'R0050C0010'), 148000000, 'deposits net of bank deposits');
+  assert.strictEqual(ev.valueOf('AFRD_MRA', 'MAIN', 'R0310C0010'), 7400000, '5% liquidity provision');
+  assert.strictEqual(ev.valueOf('AFRD_A', 'MAIN_B', 'R0090C0040'), ev.valueOf('AFRD_A', 'MAIN_A', 'R0070C0040'));
+  assert.ok(ev.present('AFRD_MRB') && ev.valueOf('AFRD_MRB', 'MAIN', 'R0080C0010') === 500000, 'the schedule the BSP derives');
+  assert.strictEqual(ev.valueOf('AFRD_B3', 'MAIN_Y1', 'C0020', 0), 1, 'sequence number of a list row');
+
+  r = checkAfrd(sample('with-errors/AFRD_RB0001_2026-2_errors.xml'));
+  const has1 = (code) => assert.ok(r.findings.some((f) => f.code === code), code + ' missing from ' + codes(r).join(', '));
+  ['XSD-REQUIRED', 'XSD-TYPE', 'COND-0001', 'REQ-AFRD_D-2', 'STG1-AFRD_A_TOTAL-ELIGIBLE-LOANS-MAIN_A-R0070C0010',
+    'STG1-AFRD_A_TOTAL-ELIGIBLE-LOANS-MAIN_A-R0070C0040', 'STG1-AFRD_B2_NO.OF SHARES-AMOUNT-MAIN_Y1-C0030'].forEach(has1);
+  assert.ok(/AFRD_A2 has no <MAIN_Y6> table/.test(r.findings.find((f) => f.code === 'XSD-REQUIRED').msg));
+  assert.ok(/only used for periods before 2023 period 3/.test(r.findings.find((f) => f.code === 'COND-0001').msg));
+  const shares = r.findings.find((f) => /NO.OF SHARES/.test(f.code));
+  assert.ok(shares.item === 0 && shares.table === 'MAIN_Y1' && shares.line > 0);
+});
+
+test('AFRD: the retired column follows the period; subsidiaries decide schedule D', () => {
+  const forms = fx.skeleton(afrd);
+  forms.AFRD_MRA.MAIN = { R0010C0010: '100.00', R0010C0020: '80.00' };
+  let r = checkAfrd(fx.buildXml(afrd, { year: 2023, period: 2, forms }));
+  assert.deepStrictEqual(codes(r), [], 'the 2010 base column is still in use before 2023 quarter 3');
+  r = checkAfrd(fx.buildXml(afrd, { year: 2023, period: 3, forms }));
+  assert.deepStrictEqual(codes(r), ['COND-0001']);
+  r = checkAfrd(fx.buildXml(afrd, { year: 2026, period: 5, forms: fx.skeleton(afrd) }));
+  assert.ok(r.findings.some((f) => f.code === 'XSD-TYPE' && /Header \/ Period/.test(f.msg)), 'a quarter is 1 to 4');
+
+  const withD = Object.assign(fx.skeleton(afrd), { AFRD_D: { MAIN: {} } });
+  const xml = fx.buildXml(afrd, { year: 2026, period: 2, forms: withD });
+  assert.deepStrictEqual(codes(checkAfrd(xml)), ['REQ-AFRD_D-2']);
+  assert.deepStrictEqual(codes(checkAfrd(xml, { bank: { BNKGRP: 'UKB', PARENTBNKGRP: 'NONE', SUBSIDIARYCOUNT: 2 } })), []);
+  r = checkAfrd(xml, { bank: { BNKGRP: 'RB' } });
+  assert.deepStrictEqual(codes(r), [], 'number of subsidiaries not given: no verdict');
+  assert.ok(Object.keys(r.stats.skippedWhy).some((w) => /SUBSIDIARYCOUNT/.test(w)));
+  assert.deepStrictEqual(Object.keys(afrd.needs.bank).sort(), ['BNKGRP', 'PARENTBNKGRP', 'SUBSIDIARYCOUNT']);
+});
+
+test('AFRD: the Excel template, nil sheets and a missing sheet', async () => {
+  const list = (name) => ({ A1: name, A4: 'MAIN_Y1', E6: 'C0010', F6: 'C0020', G6: 'C0030', A40: 'MAIN_Y2', E42: 'C0010', F42: 'C0020', G42: 'C0030' });
+  const sheets = {
+    AFRD_MRA: { A1: 'AFRD_MRA', A4: 'MAIN', E7: 'C0010', F7: 'C0020', G7: 'C0030', H7: 'C0040', D8: 'R0010', E8: 150000000, G8: 120000000, D12: 'R0050', E12: 999 },
+    AFRD_A: { A1: 'AFRD_A', A4: 'MAIN_A', E7: 'C0010', G7: 'C0030', D8: 'R0010', E8: 9000000, G8: 3000000 },
+    AFRD_A1: { A1: 'AFRD_A1', A4: 'MAIN', E7: 'C0010', F7: 'C0020', G7: 'C0030', H7: 'C0040', D8: 'R0010', E8: 120, F8: 9000000, D9: 'R0020', G9: 40, H9: 3000000 },
+    AFRD_B3: Object.assign(list('AFRD_B3'), { E7: 'Rural Bank of Sample Town', G7: 500000 }),
+    AFRD_B: { A1: 'AFRD_B', A4: 'MAIN', E7: 'C0010', G7: 'C0030', D8: 'R0010', G8: 500000 },
+    AFRD_C1: list('AFRD_C1')
+  };
+  ['AFRD_A2', 'AFRD_B1', 'AFRD_B2', 'AFRD_C'].forEach((n) => { sheets[n] = { A1: n, A4: n === 'AFRD_C' ? 'MAIN' : 'MAIN_Y1', E7: 'C0010' }; });
+  const header = { Undertaking: 'RB0001', Year: '2026', Period: '2' };
+  const book = await TEMPLATE.readWorkbook(fx.makeXlsx(sheets));
+  assert.strictEqual(SPEC.detectSheets(book.sheets.map((x) => x.name)), 'AFRD');
+  const doc = TEMPLATE.readTemplate(book, afrd, header);
+  assert.deepStrictEqual(doc.findings.map((f) => f.code + ' ' + f.loc), ['TPL-NOT-INPUT AFRD_MRA!E12']);
+  assert.strictEqual(doc.forms.AFRD_B3[0].tables.MAIN_Y1.items[0].cells.C0010.v, 'Rural Bank of Sample Town');
+  assert.deepStrictEqual(doc.forms.AFRD_A2[0].tables.MAIN_Y6, { items: [] }, 'a nil list is still there');
+  const r = ENGINE.check(afrd, doc, { profile: NO_SUBS });
+  assert.deepStrictEqual(r.findings.filter((f) => f.kind !== 'file').map((f) => f.code), []);
+  assert.strictEqual(r.evaluator.valueOf('AFRD_MRB', 'MAIN', 'R0080C0010'), 500000);
+
+  delete sheets.AFRD_C1;
+  const short = TEMPLATE.readTemplate(await TEMPLATE.readWorkbook(fx.makeXlsx(sheets)), afrd, header);
+  assert.ok(short.findings.some((f) => f.code === 'XSD-REQUIRED' && /no sheet named AFRD_C1/.test(f.msg)));
 });
 
 // ---- sending to the BSP (against a stand-in server) ------------------------------
@@ -511,6 +587,7 @@ test('index.html is the current build of src/', () => {
 (async () => {
   spec = await SPEC.load('FRP_S');
   wrr = await SPEC.load('WRR_RCB');
+  afrd = await SPEC.load('AFRD');
   let failed = 0;
   for (const [name, fn] of tests) {
     try {

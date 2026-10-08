@@ -8,12 +8,13 @@
 //   --bank RB|TB|UKB|DB     bank type
 //   --parent UKB|DB|TB|RB   type of the parent bank, when it is a bank subsidiary
 //   --offices N             number of banking offices (head office and branches)
+//   --subsidiaries N        number of bank subsidiaries that report with this bank (AFRD)
 //   --trust  --emi          has trust authority / is an e-money issuer
 //   --foreign               branch of a foreign bank
 //   --branches FILE         CSV: branch code, region code, location code (1 NCR, 2 Luzon, 3 Visayas, 4 Mindanao, 5 foreign)
 // Excel template only (an XML file carries its own header):
 //   --code BANKCODE             bank code (Undertaking)
-//   --year YYYY --month M       reports filed by month, such as FRP_S
+//   --year YYYY --month M       reports filed by month (FRP_S) or by quarter (AFRD: --month is the quarter, 1 to 4)
 //   --from DATE --to DATE       reports filed by date range, such as WRR_RCB (YYYY-MM-DD)
 // Other:
 //   --report CODE           which report the file is, when it cannot be told from the file
@@ -28,7 +29,7 @@ const SPEC = require('./src/spec.js');
 const ENGINE = require('./src/engine.js');
 const TEMPLATE = require('./src/template.js');
 
-const VALUE_FLAGS = ['--bank', '--parent', '--offices', '--branches', '--code', '--year', '--month', '--from', '--to', '--report', '--prior', '--csv'];
+const VALUE_FLAGS = ['--bank', '--parent', '--offices', '--subsidiaries', '--branches', '--code', '--year', '--month', '--from', '--to', '--report', '--prior', '--csv'];
 
 function parseArgs(argv) {
   const o = { prior: [], files: [] };
@@ -98,7 +99,8 @@ async function main() {
       BNKGRP: o.bank || undefined,
       PARENTBNKGRP: o.bank ? (o.parent || 'NONE') : undefined,
       A_TRUST: o.trust ? 1 : 0, A_EMI: o.emi ? 1 : 0, ISDOMESTIC: o.foreign ? 0 : 1,
-      BRANCHCOUNT: offices, DOMESTICBRANCHCOUNT: offices
+      BRANCHCOUNT: offices, DOMESTICBRANCHCOUNT: offices,
+      SUBSIDIARYCOUNT: o.subsidiaries === undefined ? undefined : Number(o.subsidiaries)
     },
     branches: null
   };

@@ -26,12 +26,14 @@ function cli(args, env, input) {
 
 module.exports = function (test) {
   test('api: report, bank and period are read off the file', () => {
-    const known = ['FRP_S', 'WRR_RCB'];
+    const known = { FRP_S: 'month', WRR_RCB: 'range', AFRD: 'quarter' };
     assert.deepStrictEqual(API.describe(sample('clean/FRP_S_RB0001_2026-03.xml').toString(), known),
       { reportCode: 'FRP_S', undertakingCode: 'RB0001', period: '2026-03', periodSure: true });
     assert.deepStrictEqual(API.describe(sample('clean/WRR_RCB_RB0001_2026-09-18.xml').toString(), known),
       { reportCode: 'WRR_RCB', undertakingCode: 'RB0001', period: '2026-09-18_09-24', periodSure: true });
-    const other = API.describe('<AFRD xmlns="x"><Header><Undertaking>1</Undertaking><Year>2026</Year><Period>3</Period></Header></AFRD>', known);
+    assert.deepStrictEqual(API.describe(sample('clean/AFRD_RB0001_2026-2.xml').toString(), known),
+      { reportCode: 'AFRD', undertakingCode: 'RB0001', period: '2026-2', periodSure: true }, 'a quarter has no leading zero');
+    const other = API.describe('<PPBS xmlns="x"><Header><Undertaking>1</Undertaking><Year>2026</Year><Period>3</Period></Header></PPBS>', known);
     assert.strictEqual(other.period, '2026-03');
     assert.strictEqual(other.periodSure, false, 'a quarter and a month look the same in the file');
     assert.throws(() => API.describe('<a><b></a>', known), /not well-formed/);
@@ -163,8 +165,8 @@ module.exports = function (test) {
       assert.ok(r.code === 0 && /validationStatus/.test(r.out), 'the mode of a token comes from the history: ' + r.out);
 
       // a report this tool has no rules for needs its period spelled out
-      const other = path.join(home, 'afrd.xml');
-      fs.writeFileSync(other, '<AFRD xmlns="x"><Header><Undertaking>RB0001</Undertaking><Year>2026</Year><Period>3</Period></Header></AFRD>');
+      const other = path.join(home, 'ppbs.xml');
+      fs.writeFileSync(other, '<PPBS xmlns="x"><Header><Undertaking>RB0001</Undertaking><Year>2026</Year><Period>3</Period></Header></PPBS>');
       r = await cli(['sandbox', other].concat(common), env);
       assert.ok(r.code === 2 && /Give it with --period/.test(r.out), r.out);
       r = await cli(['sandbox', other, '--period', '2026-3', '--no-wait'].concat(common), env);

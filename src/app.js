@@ -54,7 +54,7 @@
     try {
       localStorage.setItem(SETUP_KEY, JSON.stringify({
         report: $('report').value, undertaking: saved.undertaking || '', group: $('p-group').value, parent: $('p-parent').value,
-        branches: $('p-branches').value, domestic: $('p-domestic').checked, trust: $('p-trust').checked,
+        branches: $('p-branches').value, subsidiaries: $('p-subsidiaries').value, domestic: $('p-domestic').checked, trust: $('p-trust').checked,
         emi: $('p-emi').checked, list: $('p-branch-list').value
       }));
     } catch (e) { /* private window: nothing to keep */ }
@@ -66,6 +66,7 @@
     $('p-group').value = saved.group || '';
     $('p-parent').value = saved.parent || 'NONE';
     $('p-branches').value = saved.branches || '';
+    $('p-subsidiaries').value = saved.subsidiaries || '';
     $('p-domestic').checked = saved.domestic !== false;
     $('p-trust').checked = !!saved.trust;
     $('p-emi').checked = !!saved.emi;
@@ -78,9 +79,14 @@
     return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
   }
 
-  function headerDefault(name) {
+  function headerDefault(name, style) {
     var now = new Date();
     if (name === 'Undertaking') return saved.undertaking || '';
+    if ((name === 'Year' || name === 'Period') && style === 'quarter') {
+      // the quarter that ended last
+      var q = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+      return String(name === 'Year' ? q.getFullYear() : Math.floor(q.getMonth() / 3) + 1);
+    }
     if (name === 'Year' || name === 'Period') {
       var last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       return String(name === 'Year' ? last.getFullYear() : last.getMonth() + 1);
@@ -94,14 +100,17 @@
     return '';
   }
 
-  var HEADER_LABELS = { Undertaking: 'Bank code (Undertaking)', Period: 'Month', FromDate: 'From date', ToDate: 'To date' };
+  var HEADER_LABELS = { Undertaking: 'Bank code (Undertaking)', Period: 'Period', FromDate: 'From date', ToDate: 'To date' };
 
   function renderHeaderFields() {
     var box = clear($('header-fields')), spec = state.spec;
     var keep = state.header[spec.report] = state.header[spec.report] || {};
     spec.header.forEach(function (hd) {
       var name = hd[0], type = spec.types[hd[1]], id = 'h-' + name, input;
-      if (name === 'Period') {
+      if (name === 'Period' && spec.periodStyle === 'quarter') {
+        input = h('select', { id: id });
+        ['March', 'June', 'September', 'December'].forEach(function (m, i) { input.appendChild(h('option', { value: String(i + 1) }, 'Quarter ' + (i + 1) + ' - ends ' + m)); });
+      } else if (name === 'Period') {
         input = h('select', { id: id });
         MONTHS.forEach(function (m, i) { input.appendChild(h('option', { value: String(i + 1) }, (i + 1) + ' - ' + m)); });
       } else if (type.b === 'D') {
@@ -111,7 +120,7 @@
       } else {
         input = h('input', { type: 'text', id: id, autocomplete: 'off', spellcheck: 'false', placeholder: name === 'Undertaking' ? 'as registered with the BSP' : null });
       }
-      input.value = keep[name] !== undefined ? keep[name] : headerDefault(name);
+      input.value = keep[name] !== undefined ? keep[name] : headerDefault(name, spec.periodStyle);
       input.addEventListener('change', function () { keep[name] = input.value; saveSetup(); run(); });
       box.appendChild(h('label', { class: 'field' }, HEADER_LABELS[name] || name, input));
     });
@@ -165,7 +174,8 @@
       A_EMI: $('p-emi').checked ? 1 : 0,
       ISDOMESTIC: $('p-domestic').checked ? 1 : 0,
       BRANCHCOUNT: count,
-      DOMESTICBRANCHCOUNT: count
+      DOMESTICBRANCHCOUNT: count,
+      SUBSIDIARYCOUNT: $('p-subsidiaries').value.trim() === '' ? undefined : Number($('p-subsidiaries').value)
     };
     var branches = null, bad = 0;
     $('p-branch-list').value.split(/\r?\n/).forEach(function (line) {
@@ -186,6 +196,7 @@
     if (needs.bank.A_EMI && b.A_EMI) bits.push('e-money');
     if (needs.bank.ISDOMESTIC && !b.ISDOMESTIC) bits.push('foreign bank branch');
     if (needs.bank.BRANCHCOUNT && b.BRANCHCOUNT !== undefined) bits.push(b.BRANCHCOUNT + ' offices');
+    if (needs.bank.SUBSIDIARYCOUNT && b.SUBSIDIARYCOUNT !== undefined) bits.push(b.SUBSIDIARYCOUNT + ' subsidiaries');
     if (needs.branches && p.branches) bits.push(Object.keys(p.branches).length + ' in branch list');
     return bits.join(', ') || 'no bank facts needed';
   }
@@ -302,7 +313,7 @@
 
   function periodText(doc) {
     var hd = doc.header, y = hd.Year, p = hd.Period, from = hd.FromDate, to = hd.ToDate;
-    if (y && p && !y.bad && !p.bad) return MONTHS[p.v - 1] + ' ' + y.v;
+    if (y && p && !y.bad && !p.bad) return state.spec.periodStyle === 'quarter' ? 'Quarter ' + p.v + ' of ' + y.v : MONTHS[p.v - 1] + ' ' + y.v;
     if (from && to && !from.bad && !to.bad) return from.v + ' to ' + to.v;
     return 'not readable';
   }
@@ -803,10 +814,11 @@
     $('report-list').textContent = 'Reports this tool knows: ' + reports.map(function (r) { return r.report + ' ' + r.version; }).join(', ') + '.';
     loadSetup();
     var known = reports.some(function (r) { return r.report === saved.report; });
-    await useReport(known ? saved.report : reports[0].report);
+    var first = reports.filter(function (r) { return r.report === 'FRP_S'; })[0] || reports[0];
+    await useReport(known ? saved.report : first.report);
 
     var rerun = function () { $('profile-summary').textContent = profileSummary(); saveSetup(); run(); };
-    ['p-group', 'p-parent', 'p-branches', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
+    ['p-group', 'p-parent', 'p-branches', 'p-subsidiaries', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
       $(id).addEventListener('change', rerun);
     });
     $('report').addEventListener('change', function () {

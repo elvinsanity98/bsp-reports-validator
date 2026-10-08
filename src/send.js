@@ -25,11 +25,11 @@
     return btoa(out);
   }
 
-  // The period the way the BSP writes it: 2026-03 for a month, 2026-09-18_09-24 for a week.
-  function periodOf(doc) {
+  // The period the way the BSP writes it: 2026-03 for a month, 2026-1 for a quarter, 2026-09-18_09-24 for a week.
+  function periodOf(doc, style) {
     var hd = doc.header, v = function (k) { return hd[k] && !hd[k].bad ? hd[k].v : null; };
     if (v('FromDate') && v('ToDate')) return v('FromDate') + '_' + String(v('ToDate')).slice(5);
-    if (v('Year') && v('Period')) return v('Year') + '-' + ('0' + v('Period')).slice(-2);
+    if (v('Year') && v('Period')) return v('Year') + '-' + (style === 'quarter' ? v('Period') : ('0' + v('Period')).slice(-2));
     return '';
   }
 
@@ -107,7 +107,7 @@
     var u = doc.header.Undertaking;
     var fReport = h('input', { type: 'text', value: ctx.spec.report, spellcheck: 'false' });
     var fBank = h('input', { type: 'text', value: u && !u.bad ? u.v : '', spellcheck: 'false' });
-    var fPeriod = h('input', { type: 'text', value: periodOf(doc), spellcheck: 'false', placeholder: '2026-03 or 2026-09-18_09-24' });
+    var fPeriod = h('input', { type: 'text', value: periodOf(doc, ctx.spec.periodStyle), spellcheck: 'false', placeholder: '2026-03, 2026-1 or 2026-09-18_09-24' });
     var fAttach = h('input', { type: 'file', multiple: true });
     var logBox = h('div', { class: 'send-log' });
     var errors = ctx.result.counts.error;

@@ -370,6 +370,8 @@ def build(xsd, raw):
         msg = re.sub(r'^STG1-[A-Za-z0-9_.-]+: ', '', msg) if code.startswith('STG1-') else msg
         if msg.startswith(code + ': '):
             msg = msg[len(code) + 2:]
+        elif msg.startswith(code + '. '):
+            msg = msg[len(code) + 2:]
         elif msg.startswith(code + ' '):
             msg = msg[len(code) + 1:]
         rule = [code, msg, clean(r[2]), r[3], clean(r[4]), r[5] or 0,
@@ -413,10 +415,17 @@ def main():
     m = re.match(r'(.+)_v([0-9.]+)\.xsd$', os.path.basename(xsd_path[0]))
     spec['report'], spec['version'] = m.group(1), m.group(2)
     spec['title'] = args.title
+    # How the BSP writes the period of this report in a submission:
+    # a date range (2026-09-18_09-24), a month (2026-03) or a quarter (2026-1).
+    names = [h[0] for h in spec['header']]
+    period = next((spec['types'][h[1]] for h in spec['header'] if h[0] == 'Period'), {})
+    spec['periodStyle'] = ('range' if 'FromDate' in names and 'ToDate' in names
+                           else 'month' if period.get('max') == '12'
+                           else 'quarter' if period.get('max') == '4' else '')
     out = args.out or os.path.join(HERE, '..', 'src', 'spec-%s.js' % spec['report'].lower())
 
     # What the page needs to recognise a file before it unpacks the definition.
-    meta = collections.OrderedDict((k, spec[k]) for k in ('report', 'version', 'title', 'root', 'ns'))
+    meta = collections.OrderedDict((k, spec[k]) for k in ('report', 'version', 'title', 'root', 'ns', 'periodStyle'))
     meta['sheets'] = [f['n'] for f in spec['forms'] if f.get('x')]
     text = json.dumps(spec, ensure_ascii=True, separators=(',', ':'))
     meta['blob'] = base64.b64encode(gzip.compress(text.encode('utf-8'), 9, mtime=0)).decode('ascii')
