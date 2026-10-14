@@ -21,6 +21,14 @@
 //   --prior FILE            an earlier period's XML, for period-on-period rules (repeatable)
 //   --csv FILE              write the findings to a CSV file
 //   --all                   list every finding (default: first 40)
+//   --save-xml              write the XML submission file next to the input
+//                           (named like the portal's: WRR_RCB_<bank>_<date>_<time>.xml)
+//   --save-xlsx             write the file as an Excel workbook next to the input, laid out
+//                           like the BSP input template plus a Header sheet with the bank code
+//                           and period; edit it in Excel, then check it or --save-xml it
+//
+// A workbook with a Header sheet (as --save-xlsx writes) gives the bank code and
+// period itself; --code, --year, --month, --from and --to override it.
 //
 // Exit code: 0 = no errors, 1 = errors found, 2 = could not run.
 const fs = require('fs');
@@ -28,7 +36,9 @@ const path = require('path');
 const SPEC = require('./src/spec.js');
 const ENGINE = require('./src/engine.js');
 const TEMPLATE = require('./src/template.js');
+const EXPORTER = require('./src/export.js');
 
+let lastProfile = null;
 const VALUE_FLAGS = ['--bank', '--parent', '--offices', '--subsidiaries', '--branches', '--code', '--year', '--month', '--from', '--to', '--report', '--prior', '--csv'];
 
 function parseArgs(argv) {
@@ -52,7 +62,7 @@ function parseArgs(argv) {
 // file cannot say (a template with renamed sheets, an XML with a wrong root).
 async function readDoc(file, o, report) {
   const bytes = new Uint8Array(fs.readFileSync(file));
-  const header = { Undertaking: o.code, Year: o.year, Period: o.month, FromDate: o.from, ToDate: o.to };
+  const flags = { Undertaking: o.code, Year: o.year, Period: o.month, FromDate: o.from, ToDate: o.to };
   const pick = (found) => {
     if (!report && !found) {
       throw new Error('cannot tell which report ' + path.basename(file) + ' is. Name it with --report (' +
@@ -63,6 +73,8 @@ async function readDoc(file, o, report) {
   if (/\.xls[xm]$/i.test(file)) {
     const book = await TEMPLATE.readWorkbook(bytes);
     const spec = await pick(SPEC.detectSheets(book.sheets.map((s) => s.name)));
+    const header = TEMPLATE.readHeader(book, spec);
+    Object.keys(flags).forEach((k) => { if (flags[k] !== undefined) header[k] = flags[k]; });
     return { spec, doc: TEMPLATE.readTemplate(book, spec, header) };
   }
   if (/\.zip$/i.test(file)) {
@@ -120,6 +132,7 @@ async function main() {
   }
 
   const r = ENGINE.check(spec, doc, { profile, history });
+  lastProfile = profile;
   const st = r.stats, h = doc.header;
   const show = (x) => (x && !x.bad ? x.v : '(not given)');
 
@@ -147,7 +160,43 @@ async function main() {
     fs.writeFileSync(o.csv, rows.map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n');
     console.log(`\nFindings written to ${o.csv}`);
   }
-  process.exit(r.counts.error ? 1 : 0);
+  // with a file written, the exit code is that of the writing (and of the check of the XML written)
+  let code = r.counts.error ? 1 : 0;
+  if (o['save-xlsx'] || o['save-xml']) code = 0;
+  if (o['save-xlsx']) code = Math.max(code, await saveXlsx(spec, doc, file));
+  if (o['save-xml']) code = Math.max(code, saveXml(spec, doc, file));
+  process.exit(code);
+}
+
+// Writes the file as a workbook in the layout of the BSP input template.
+async function saveXlsx(spec, doc, file) {
+  console.log('');
+  const out = await EXPORTER.toXlsx(spec, doc);
+  if (!out.bytes) { out.notes.forEach((n) => console.log(n)); return 2; }
+  const target = path.join(path.dirname(path.resolve(file)), out.name);
+  fs.writeFileSync(target, out.bytes);
+  console.log('Workbook written: ' + target);
+  out.notes.forEach((n) => console.log('  ' + n));
+  return 0;
+}
+
+// Writes the file as the XML submission file, then checks the file written.
+function saveXml(spec, doc, file) {
+  console.log('');
+  const out = EXPORTER.toXml(spec, doc);
+  if (out.problems.length) {
+    console.log('No XML written. Fix these first:');
+    out.problems.forEach((p) => console.log('  ' + p));
+    return 2;
+  }
+  const target = path.join(path.dirname(path.resolve(file)), out.name);
+  fs.writeFileSync(target, out.xml);
+  console.log('XML written: ' + target);
+  out.rounded.forEach((x) => console.log('  rounded ' + x.where + ': ' + x.from + ' -> ' + x.to + ' (rounding noise from Excel)'));
+  const back = ENGINE.check(spec, ENGINE.readXml(out.xml, spec), { profile: lastProfile });
+  console.log('Check of the written file: ' + back.counts.error + ' error(s), ' + back.counts.warning + ' warning(s)');
+  back.findings.slice(0, 20).forEach((f) => console.log(`  ${f.sev.toUpperCase().padEnd(7)} ${f.code}: ${f.msg}`));
+  return back.counts.error ? 1 : 0;
 }
 
 main().catch((e) => { console.error('Could not check the file: ' + e.message); process.exit(2); });

@@ -25,7 +25,7 @@
     <label class="drop" id="drop" for="file">
       <input type="file" id="file" accept=".xml,.xlsx,.xlsm,.zip">
       <span class="drop-title">Drop the submission file here, or click to choose</span>
-      <span class="drop-hint">.xml submission file &middot; .zip holding the .xml &middot; .xlsx BSP input template, filled in</span>
+      <span class="drop-hint">.xml submission file &middot; .zip holding the .xml &middot; .xlsx BSP input template, filled in, or a workbook exported from here</span>
     </label>
 
     <div class="setup">
@@ -39,7 +39,7 @@
       </fieldset>
 
       <fieldset class="setup-block">
-        <legend>Reporting period <small>used for the Excel template; an XML file carries its own</small></legend>
+        <legend>Reporting period <small>used for the Excel template; an XML file, or a workbook exported from here, carries its own</small></legend>
         <div class="row" id="header-fields"></div>
       </fieldset>
 
@@ -122,7 +122,8 @@
   <section id="panel-schedules" role="tabpanel" aria-labelledby="tab-schedules" hidden>
     <div class="empty" id="schedules-empty">
       <p><strong>No file checked yet.</strong></p>
-      <p>After a check, this tab shows each schedule as the BSP will see it: your figures plus the totals it calculates.</p>
+      <p>After a check, this tab shows each schedule as the BSP will see it: your figures plus the totals it calculates.
+        Values can be changed here too, then exported to Excel or XML.</p>
     </div>
     <div id="schedules" hidden>
       <div class="toolbar">
@@ -130,7 +131,16 @@
           <select id="schedule-pick"></select>
         </label>
         <label class="check inline"><input type="checkbox" id="schedule-filled" checked><span>Hide rows with no amounts</span></label>
+        <label class="check inline"><input type="checkbox" id="schedule-edit"><span>Edit values</span></label>
       </div>
+      <div class="editbar" id="editbar" hidden>
+        <span id="edit-status"></span>
+        <span class="row">
+          <button class="btn small" type="button" id="edit-xlsx">Export to Excel</button>
+          <button class="btn small primary" type="button" id="edit-xml">Export to XML</button>
+        </span>
+      </div>
+      <div class="send-log" id="edit-note"></div>
       <div id="schedule-view"></div>
     </div>
   </section>
@@ -151,7 +161,8 @@
         <li>The BSP&rsquo;s reference data about your bank. Enter the facts under <em>Bank profile</em>; anything left blank turns the rules that need it into &ldquo;not checked&rdquo;.</li>
         <li>Your earlier submissions as stored at the BSP. Add the earlier files under <em>Earlier periods</em> to run the period-on-period rules.</li>
         <li><code>CHECK-</code> findings are this tool&rsquo;s own sanity checks. They are not BSP rules and are always warnings.</li>
-        <li>An empty sheet in the Excel template is treated as a schedule that was not submitted.</li>
+        <li>An empty sheet in the Excel template is treated as a schedule that was not submitted, unless the Header sheet of a workbook
+          exported from here lists it under &ldquo;Filed empty&rdquo;.</li>
         <li>This page cannot send a file to the BSP by itself. Run <code>node submit.js ui</code> on your PC to get the same page with
           &ldquo;Send to sandbox&rdquo; and &ldquo;Submit to the BSP&rdquo; buttons; that program holds the bank&rsquo;s certificate.</li>
       </ul>
@@ -184,6 +195,9 @@
 <script src="spec.js"></script>
 <script src="engine.js"></script>
 <script src="template.js"></script>
+<script src="xlsxwrite.js"></script>
+<script src="export.js"></script>
+<script src="edit.js"></script>
 <script src="app.js"></script>
 <script src="send.js"></script>
 </body>

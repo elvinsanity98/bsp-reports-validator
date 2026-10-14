@@ -7,6 +7,8 @@ const FORMULA = require('../src/formula.js');
 const SPEC = require('../src/spec.js');
 const ENGINE = require('../src/engine.js');
 const TEMPLATE = require('../src/template.js');
+const EXPORTER = require('../src/export.js');
+const EDIT = require('../src/edit.js');
 const fx = require('./fixtures.js');
 
 const tests = [];
@@ -555,6 +557,200 @@ test('AFRD: the Excel template, nil sheets and a missing sheet', async () => {
   delete sheets.AFRD_C1;
   const short = TEMPLATE.readTemplate(await TEMPLATE.readWorkbook(fx.makeXlsx(sheets)), afrd, header);
   assert.ok(short.findings.some((f) => f.code === 'XSD-REQUIRED' && /no sheet named AFRD_C1/.test(f.msg)));
+});
+
+// ---- writing the XML from a template --------------------------------------------
+
+const flatCells = (doc) => {
+  const o = {};
+  for (const f of Object.keys(doc.forms)) for (const inst of doc.forms[f]) for (const tn of Object.keys(inst.tables)) {
+    const t = inst.tables[tn];
+    if (t.items) t.items.forEach((it, i) => Object.keys(it.cells).forEach((c) => { o[f + '.' + tn + '#' + i + '.' + c] = it.cells[c].v; }));
+    else Object.keys(t.cells).forEach((c) => { o[f + '.' + tn + '.' + c] = t.cells[c].v; });
+  }
+  return o;
+};
+
+test('export: a WRR template becomes the XML the portal would save', async () => {
+  const sheet = {
+    A1: 'WRR', A4: 'MAIN', E7: 'C0010', F7: 'C0020', I7: 'C0050', J7: 'C0060', K7: 'C0070', L7: 'C0080',
+    D13: 'R0060', F13: 5200000.5, I13: 5210000, J13: 5195000.25, K13: 5180000, L13: 5205000.75,
+    D27: 'R0190', F27: 98358232.839999944, I27: 98274430.079999954,
+    D35: 'R0270', E35: 'Dormant & inactive <old>', F35: 15000, I35: 15000, J35: 15000, K35: 15000, L35: 15000
+  };
+  const header = { Undertaking: 'RB0001', FromDate: '2026-10-02', ToDate: '2026-10-08' };
+  const doc = await TEMPLATE.read(fx.makeXlsx({ WRR: sheet }), wrr, header);
+  const out = EXPORTER.toXml(wrr, doc, { now: new Date(2026, 9, 14, 15, 4, 5) });
+  assert.deepStrictEqual(out.problems, []);
+  assert.strictEqual(out.name, 'WRR_RCB_RB0001_2026-10-14_15-04-05.xml');
+  assert.deepStrictEqual(out.rounded.map((x) => x.from + '>' + x.to), ['98358232.8399999>98358232.84']);
+  assert.ok(out.xml.startsWith('<?xml version="1.0" encoding="utf-8"?>\r\n<WRR_RCB xmlns="http://bsp.gov.ph/xml/WRR_RCB/1.0">\r\n\t<Header>'));
+  assert.ok(out.xml.includes('\t\t\t<R0270C0010>Dormant &amp; inactive &lt;old&gt;</R0270C0010>\r\n'));
+  assert.ok(out.xml.indexOf('R0060C0020') < out.xml.indexOf('R0060C0050') && out.xml.indexOf('R0060C0080') < out.xml.indexOf('R0190C0020'), 'cells in row order');
+  const back = ENGINE.readXml(out.xml, wrr);
+  const r = ENGINE.check(wrr, back, { profile: { bank: { BNKGRP: 'RB' } } });
+  assert.deepStrictEqual(r.findings.map((f) => f.code), [], 'the written file passes');
+  const cells = flatCells(back);
+  assert.strictEqual(cells['WRR.MAIN.R0190C0020'], 98358232.84);
+  assert.strictEqual(cells['WRR.MAIN.R0060C0080'], 5205000.75);
+  assert.strictEqual(Object.keys(cells).length, 13);
+
+  const real = await TEMPLATE.read(fx.makeXlsx({ WRR: Object.assign({}, sheet, { F27: 1234.567 }) }), wrr, header);
+  let bad = EXPORTER.toXml(wrr, real);
+  assert.ok(bad.xml === null && /R0190C0020 \(WRR!F27\): "1234.567" has more than 2 decimal places/.test(bad.problems.join(' ')), 'a real third decimal is not rounded away');
+  bad = EXPORTER.toXml(wrr, await TEMPLATE.read(fx.makeXlsx({ WRR: sheet }), wrr, { Undertaking: '', FromDate: '2026-10-02', ToDate: '2026-10-08' }));
+  assert.ok(bad.xml === null && /Header \/ Undertaking is not given/.test(bad.problems.join(' ')));
+});
+
+test('export: nil schedules, lists, and a round trip through XML', async () => {
+  // AFRD: required schedules from nil sheets come out as empty elements the schema accepts
+  const doc = TEMPLATE.readTemplate(await TEMPLATE.readWorkbook(fx.makeXlsx(Object.assign(
+    { AFRD_B3: { A1: 'AFRD_B3', A4: 'MAIN_Y1', E6: 'C0010', G6: 'C0030', E7: 'Rural Bank of Sample Town', G7: 500000 },
+      AFRD_B: { A1: 'AFRD_B', A4: 'MAIN', G7: 'C0030', D8: 'R0010', G8: 500000 } },
+    ...['AFRD_MRA', 'AFRD_A', 'AFRD_A1', 'AFRD_A2', 'AFRD_B1', 'AFRD_B2', 'AFRD_C', 'AFRD_C1'].map((n) => ({ [n]: { A1: n, A4: n === 'AFRD_A' ? 'MAIN_A' : /A2|B1|B2|C1/.test(n) ? 'MAIN_Y1' : 'MAIN', E7: 'C0010' } }))
+  ))), afrd, { Undertaking: 'RB0001', Year: '2026', Period: '2' });
+  const out = EXPORTER.toXml(afrd, doc, { now: new Date(2026, 6, 13, 9, 0, 0) });
+  assert.deepStrictEqual(out.problems, []);
+  assert.strictEqual(out.name, 'AFRD_2026_2_RB0001_2026-07-13_09-00-00.xml');
+  assert.ok(out.xml.includes('\t\t<MAIN_Y6/>\r\n') && out.xml.includes('\t\t\t<MAIN_Y1_Item>\r\n\t\t\t\t<C0010>Rural Bank of Sample Town</C0010>'));
+  const r = ENGINE.check(afrd, ENGINE.readXml(out.xml, afrd), { profile: NO_SUBS });
+  assert.deepStrictEqual(r.findings.map((f) => f.code), []);
+
+  // any document goes back out unchanged: read a sample, write it, read it again
+  for (const [s, name] of [[spec, 'clean/FRP_S_RB0001_2026-03.xml'], [wrr, 'clean/WRR_RCB_RB0001_2026-09-18.xml'], [afrd, 'clean/AFRD_RB0001_2026-2.xml']]) {
+    const first = ENGINE.readXml(sample(name), s);
+    const again = ENGINE.readXml(EXPORTER.toXml(s, first).xml, s);
+    assert.deepStrictEqual(flatCells(again), flatCells(first), name);
+    assert.deepStrictEqual(Object.keys(again.forms), Object.keys(first.forms), name);
+  }
+});
+
+// every value of a document, fields and header included
+const flatAll = (doc) => {
+  const o = flatCells(doc);
+  for (const f of Object.keys(doc.forms)) doc.forms[f].forEach((inst, n) => Object.keys(inst.fields).forEach((k) => { o[f + '#' + n + '.' + k] = inst.fields[k].raw; }));
+  Object.keys(doc.header).forEach((k) => { o['Header.' + k] = String(doc.header[k].raw).trim(); });
+  return o;
+};
+
+// XML -> workbook -> read as a template: the same document, header included
+async function throughExcel(s, doc) {
+  const out = await EXPORTER.toXlsx(s, doc, { now: new Date(2026, 9, 14, 9, 30, 0) });
+  const book = await TEMPLATE.readWorkbook(out.bytes);
+  return { out, book, doc: TEMPLATE.readTemplate(book, s, TEMPLATE.readHeader(book, s)) };
+}
+
+test('export: an XML file goes to Excel and comes back the same', async () => {
+  for (const [s, name] of [[spec, 'clean/FRP_S_RB0001_2026-03.xml'], [spec, 'with-errors/FRP_S_RB0001_2026-03_errors.xml'],
+    [wrr, 'clean/WRR_RCB_RB0001_2026-09-18.xml'], [wrr, 'with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml'],
+    [afrd, 'clean/AFRD_RB0001_2026-2.xml'], [afrd, 'with-errors/AFRD_RB0001_2026-2_errors.xml']]) {
+    const first = ENGINE.readXml(sample(name), s);
+    const { out, book, doc } = await throughExcel(s, first);
+    assert.deepStrictEqual(flatAll(doc), flatAll(first), name);
+    assert.strictEqual(book.sheets[0].name, 'Header', name);
+    assert.ok(/^(FRP_S_2026_3|WRR_RCB|AFRD_2026_2)_RB0001_2026-10-14_09-30-00\.xlsx$/.test(out.name), out.name);
+    // the workbook is checked like the XML, apart from where a finding points
+    const a = ENGINE.check(s, first, { profile: fx.RB }), b = ENGINE.check(s, doc, { profile: fx.RB });
+    const key = (f) => f.code + ' ' + (f.form || '') + ' ' + (f.cell || '') + ' ' + (f.kind === 'rule' ? f.left + ' ' + f.right : '');
+    // values with no input cell in the template are left out, and said so; missing required tables are added
+    const gone = /^(XSD-REQUIRED|XSD-CALCULATED|XSD-UNKNOWN)$/;
+    assert.deepStrictEqual(b.findings.filter((f) => !gone.test(f.code)).map(key).sort(), a.findings.filter((f) => !gone.test(f.code)).map(key).sort(), name);
+    a.findings.filter((f) => /^(XSD-CALCULATED|XSD-UNKNOWN)$/.test(f.code)).forEach((f) => assert.ok(out.notes.join(' ').includes(f.form + ' / ' + f.table + ' / ' + f.cell), name + ' ' + f.cell));
+    // and the XML written from the workbook holds what the file held (1000000.00 comes back as 1000000)
+    const x2 = EXPORTER.toXml(s, doc);
+    if (/^clean/.test(name)) assert.deepStrictEqual(Object.keys(ENGINE.readXml(x2.xml, s).forms), Object.keys(first.forms), name);
+    if (/^clean/.test(name)) assert.deepStrictEqual(flatAll(ENGINE.readXml(x2.xml, s)), flatAll(first), name);
+  }
+});
+
+test('export: lists and fields survive the trip through Excel', async () => {
+  // a list of every kind with entries, fields, and a value that is not valid
+  for (const s of [spec, wrr, afrd]) {
+    const doc = ENGINE.readXml(fx.buildXml(s, { period: 3, forms: {} }), s);
+    let lists = 0;
+    for (const form of s.forms.filter((f) => f.x)) {
+      for (const t of form.tb.filter((x) => x.x)) {
+        const input = Object.keys(t.c).filter((c) => t.c[c][0] === 0);
+        if (!input.length) continue;
+        if (t.k === 'S') { EDIT.setValue(s, doc, { form: form.n, table: t.n, cell: input[0] }, '12.5'); continue; }
+        for (let i = 0; i < 2; i++) {
+          const n = EDIT.addItem(s, doc, form.n, t.n);
+          input.slice(0, 3).forEach((c, k) => {
+            const ty = s.types[Array.isArray(t.c[c][1]) ? t.c[c][1][0] : t.c[c][1]];
+            EDIT.setValue(s, doc, { form: form.n, table: t.n, cell: c, item: n }, ty.b === 'd' || ty.b === 'i' ? String(100 * (n + 1) + k) : ty.en ? ty.en[0] : 'X' + n + k);
+          });
+        }
+        lists++;
+      }
+      (form.f || []).forEach((fd) => { const ty = s.types[fd[1]]; EDIT.setField(s, doc, form.n, fd[0], ty.en ? ty.en[0] : ty.b === 'D' ? '2026-03-31' : ty.b === 'i' || ty.b === 'd' ? '7' : 'Text'); });
+    }
+    assert.ok(lists > 0 || s === wrr, s.report);
+    const back = (await throughExcel(s, doc)).doc;
+    assert.deepStrictEqual(flatAll(back), flatAll(doc), s.report);
+  }
+});
+
+test('edit: values are checked as typed; findings and lists follow the changes', () => {
+  const doc = ENGINE.readXml(sample('clean/WRR_RCB_RB0001_2026-09-18.xml'), wrr);
+  const at = { form: 'WRR', table: 'MAIN', cell: 'R0060C0020' };
+  assert.strictEqual(EDIT.setValue(wrr, doc, at, '1,234,567.80'), null, 'thousands separators are dropped');
+  assert.strictEqual(doc.forms.WRR[0].tables.MAIN.cells.R0060C0020.v, 1234567.8);
+  assert.ok(/more than 2 decimal places/.test(EDIT.setValue(wrr, doc, at, '1.234')));
+  let r = ENGINE.check(wrr, doc, { profile: fx.RB });
+  assert.ok(r.findings.some((f) => f.code === 'XSD-TYPE' && f.cell === 'R0060C0020'), 'a bad value is a finding');
+  assert.ok(/1\.234/.test(EXPORTER.toXml(wrr, doc).problems.join(' ')), 'and blocks the XML');
+  EDIT.setValue(wrr, doc, at, '5200000.50');
+  r = ENGINE.check(wrr, doc, { profile: fx.RB });
+  assert.ok(!r.findings.some((f) => f.code === 'XSD-TYPE'), 'fixed');
+  assert.ok(EXPORTER.toXml(wrr, doc).xml.includes('<R0060C0020>5200000.50</R0060C0020>'));
+  assert.throws(() => EDIT.setValue(wrr, doc, { form: 'WRR', table: 'MAIN', cell: 'R0060C0030' }, '1'), /worked out by the BSP/);
+  assert.strictEqual(doc.edited, 3);
+
+  // header: empty is a finding, a value clears it
+  EDIT.setHeader(wrr, doc, 'Undertaking', '');
+  assert.ok(doc.findings.some((f) => f.code === 'XSD-HEADER' && f.cell === 'Undertaking'));
+  assert.ok(/Undertaking is not given/.test(EXPORTER.toXml(wrr, doc).problems.join(' ')));
+  EDIT.setHeader(wrr, doc, 'Undertaking', 'RB0002');
+  assert.ok(!doc.findings.some((f) => f.form === 'Header'));
+  assert.ok(EXPORTER.toXml(wrr, doc).name.startsWith('WRR_RCB_RB0002_'));
+
+  // lists: entries are added and removed, findings of later entries move up
+  const form = spec.forms.find((f) => f.x && f.tb.some((t) => t.x && t.k === 'Y'));
+  const t = form.tb.find((x) => x.x && x.k === 'Y');
+  const d2 = ENGINE.readXml(fx.buildXml(spec, { period: 3, forms: {} }), spec);
+  const code = Object.keys(t.c).find((c) => t.c[c][0] === 0 && spec.types[Array.isArray(t.c[c][1]) ? t.c[c][1][0] : t.c[c][1]].b === 'd');
+  [0, 1, 2].forEach(() => EDIT.addItem(spec, d2, form.n, t.n));
+  EDIT.setValue(spec, d2, { form: form.n, table: t.n, cell: code, item: 0 }, '10');
+  EDIT.setValue(spec, d2, { form: form.n, table: t.n, cell: code, item: 2 }, 'abc');
+  EDIT.removeItem(spec, d2, form.n, t.n, 1);
+  const items = d2.forms[form.n][0].tables[t.n].items;
+  assert.strictEqual(items.length, 2);
+  assert.strictEqual(items[1].index, 1);
+  assert.strictEqual(d2.findings.find((f) => f.code === 'XSD-TYPE').item, 1, 'the bad value now sits in entry 2');
+  EDIT.removeItem(spec, d2, form.n, t.n, 1);
+  assert.ok(!d2.findings.some((f) => f.code === 'XSD-TYPE'), 'and goes with its entry');
+});
+
+test('cli: --save-xlsx and --save-xml', () => {
+  const { execFileSync } = require('child_process');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bspv-'));
+  try {
+    const xmlFile = path.join(dir, 'WRR.xml');
+    fs.writeFileSync(xmlFile, sample('clean/WRR_RCB_RB0001_2026-09-18.xml'));
+    const cli = (args) => execFileSync(process.execPath, [path.join(__dirname, '..', 'cli.js')].concat(args), { encoding: 'utf8' });
+    assert.ok(/Workbook written: .*WRR_RCB_RB0001_.*\.xlsx/.test(cli([xmlFile, '--save-xlsx', '--bank', 'RB'])));
+    const book = fs.readdirSync(dir).find((n) => /\.xlsx$/.test(n));
+    fs.unlinkSync(xmlFile);
+    const text = cli([path.join(dir, book), '--save-xml', '--bank', 'RB']);
+    assert.ok(/Header    Undertaking RB0001, FromDate 2026-09-18, ToDate 2026-09-24/.test(text), 'the Header sheet gives the bank code and period');
+    assert.ok(/Check of the written file: 0 error\(s\), 0 warning\(s\)/.test(text), text);
+    const written = fs.readdirSync(dir).find((n) => /\.xml$/.test(n));
+    const a = ENGINE.readXml(sample('clean/WRR_RCB_RB0001_2026-09-18.xml'), wrr), b = ENGINE.readXml(fs.readFileSync(path.join(dir, written), 'utf8'), wrr);
+    assert.deepStrictEqual(flatAll(b), flatAll(a));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ---- sending to the BSP (against a stand-in server) ------------------------------

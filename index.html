@@ -327,6 +327,24 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
 .legend .l-calc::before { background: var(--sunken); }
 .legend .l-hit::before { box-shadow: inset 0 0 0 2px var(--error); border-color: transparent; }
 
+/* ---- editing in the schedule viewer ---- */
+.editbar { display: flex; gap: 8px 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin: -2px 0 10px;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--accent-soft); font-size: .88rem; }
+#edit-note:empty { display: none; }
+#edit-note { margin: 0 0 12px; }
+.sheet td.edit { padding: 0; background: var(--surface); }
+.sheet td.edit.bad { background: var(--error-soft); }
+.cell-in { width: 100%; min-width: 7.5rem; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600;
+  text-align: right; padding: 4px 8px; }
+.sheet td.edit.txt .cell-in { text-align: left; font-family: var(--sans); }
+.cell-in:focus { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 0; background: var(--accent-soft); }
+.xbtn { margin-left: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-3); border-radius: 4px;
+  font-size: .72rem; line-height: 1; padding: 2px 5px; cursor: pointer; }
+.xbtn:hover { color: var(--error); border-color: var(--error); }
+.list-tools { margin-top: 6px; align-items: center; }
+.edit-fields { margin: 0 0 12px; }
+.edit-fields .field-in { font-family: var(--mono); }
+
 @media (max-width: 860px) {
   .side { grid-template-columns: 1fr; }
   .finding-head { grid-template-columns: 1fr; }
@@ -377,7 +395,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     <label class="drop" id="drop" for="file">
       <input type="file" id="file" accept=".xml,.xlsx,.xlsm,.zip">
       <span class="drop-title">Drop the submission file here, or click to choose</span>
-      <span class="drop-hint">.xml submission file &middot; .zip holding the .xml &middot; .xlsx BSP input template, filled in</span>
+      <span class="drop-hint">.xml submission file &middot; .zip holding the .xml &middot; .xlsx BSP input template, filled in, or a workbook exported from here</span>
     </label>
 
     <div class="setup">
@@ -391,7 +409,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
       </fieldset>
 
       <fieldset class="setup-block">
-        <legend>Reporting period <small>used for the Excel template; an XML file carries its own</small></legend>
+        <legend>Reporting period <small>used for the Excel template; an XML file, or a workbook exported from here, carries its own</small></legend>
         <div class="row" id="header-fields"></div>
       </fieldset>
 
@@ -474,7 +492,8 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
   <section id="panel-schedules" role="tabpanel" aria-labelledby="tab-schedules" hidden>
     <div class="empty" id="schedules-empty">
       <p><strong>No file checked yet.</strong></p>
-      <p>After a check, this tab shows each schedule as the BSP will see it: your figures plus the totals it calculates.</p>
+      <p>After a check, this tab shows each schedule as the BSP will see it: your figures plus the totals it calculates.
+        Values can be changed here too, then exported to Excel or XML.</p>
     </div>
     <div id="schedules" hidden>
       <div class="toolbar">
@@ -482,7 +501,16 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
           <select id="schedule-pick"></select>
         </label>
         <label class="check inline"><input type="checkbox" id="schedule-filled" checked><span>Hide rows with no amounts</span></label>
+        <label class="check inline"><input type="checkbox" id="schedule-edit"><span>Edit values</span></label>
       </div>
+      <div class="editbar" id="editbar" hidden>
+        <span id="edit-status"></span>
+        <span class="row">
+          <button class="btn small" type="button" id="edit-xlsx">Export to Excel</button>
+          <button class="btn small primary" type="button" id="edit-xml">Export to XML</button>
+        </span>
+      </div>
+      <div class="send-log" id="edit-note"></div>
       <div id="schedule-view"></div>
     </div>
   </section>
@@ -503,7 +531,8 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
         <li>The BSP&rsquo;s reference data about your bank. Enter the facts under <em>Bank profile</em>; anything left blank turns the rules that need it into &ldquo;not checked&rdquo;.</li>
         <li>Your earlier submissions as stored at the BSP. Add the earlier files under <em>Earlier periods</em> to run the period-on-period rules.</li>
         <li><code>CHECK-</code> findings are this tool&rsquo;s own sanity checks. They are not BSP rules and are always warnings.</li>
-        <li>An empty sheet in the Excel template is treated as a schedule that was not submitted.</li>
+        <li>An empty sheet in the Excel template is treated as a schedule that was not submitted, unless the Header sheet of a workbook
+          exported from here lists it under &ldquo;Filed empty&rdquo;.</li>
         <li>This page cannot send a file to the BSP by itself. Run <code>node submit.js ui</code> on your PC to get the same page with
           &ldquo;Send to sandbox&rdquo; and &ldquo;Submit to the BSP&rdquo; buttons; that program holds the bank&rsquo;s certificate.</li>
       </ul>
@@ -2401,6 +2430,17 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
       }
     });
 
+    // schedules the Header sheet of a workbook exported from here lists as sent with no data
+    var nil = {};
+    book.sheets.forEach(function (sheet) {
+      if (sheet.name.trim().toLowerCase() !== 'header') return;
+      Object.keys(sheet.rows).forEach(function (rn) {
+        var a = sheet.rows[rn][1], b = sheet.rows[rn][2];
+        if (typeof a !== 'string' || a.trim().toLowerCase() !== 'filed empty' || typeof b !== 'string') return;
+        b.split(/[\s,;]+/).forEach(function (n) { if (spec.formByName[n]) nil[n] = true; });
+      });
+    });
+
     var matched = 0, strange = [];
     book.sheets.forEach(function (sheet) {
       var form = spec.formByName[sheet.name.trim()];
@@ -2464,9 +2504,9 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
         var cols = Object.keys(colCodes).map(Number).sort(function (a, b) { return a - b; });
         var body = inSection.filter(function (rn) { return rn > codeRow; });
 
-        function rowCodeOf(r, pattern) {
+        function rowCodeOf(r, pattern, known) {
           for (var c = 2; c <= 6; c++) {
-            if (typeof r[c] === 'string' && pattern.test(r[c].trim()) && !colCodes[c]) return { code: r[c].trim(), col: c };
+            if (typeof r[c] === 'string' && pattern.test(r[c].trim()) && !colCodes[c] && (!known || known[r[c].trim()])) return { code: r[c].trim(), col: c };
           }
           return null;
         }
@@ -2528,7 +2568,10 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
           // one entry per column (or per group of coded columns), rows carry the codes
           var coded = [];
           inSection.forEach(function (rn) {
-            var rc = rowCodeOf(rows[rn], /^[A-Z][A-Z0-9_]*$/);
+            // only a code of this list counts, so a label such as TOTAL is not taken for one
+            var known = {};
+            Object.keys(table.c).forEach(function (k) { known[k] = true; known[k.slice(0, 5)] = true; });
+            var rc = rowCodeOf(rows[rn], /^[A-Z][A-Z0-9_]*$/, known);
             if (rc && rn !== codeRow) coded.push({ row: rn, code: rc.code, col: rc.col });
           });
           if (!coded.length) return;
@@ -2562,13 +2605,14 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
       });
 
       // A schedule the schema requires is part of every file, so its sheet is
-      // read as filed even when it is nil; so are its required tables.
-      if (form.r) {
+      // read as filed even when it is nil; so are its required tables. The same
+      // goes for a schedule listed under "Filed empty" in the Header sheet.
+      if (form.r || nil[form.n]) {
         form.tb.forEach(function (t) {
           if (t.r && !inst.tables[t.n]) inst.tables[t.n] = t.k === 'S' ? { cells: {} } : { items: [] };
         });
       }
-      if (filled || form.r) doc.forms[form.n] = [inst];
+      if (filled || form.r || nil[form.n]) doc.forms[form.n] = [inst];
     });
 
     if (!matched) {
@@ -2592,14 +2636,647 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     return readWorkbook(bytes).then(function (book) { return readTemplate(book, spec, header); });
   }
 
-  return { read: read, readWorkbook: readWorkbook, readTemplate: readTemplate, unzip: unzip, colName: colName, toRaw: toRaw };
+  // The bank code and period kept in a sheet named Header (column A the field,
+  // column B its value), as the workbooks this tool writes have. The BSP's own
+  // template has no such sheet; then this returns {}.
+  function readHeader(book, spec) {
+    var out = {};
+    var sheet = book.sheets.filter(function (s) { return s.name.trim().toLowerCase() === 'header'; })[0];
+    if (!sheet) return out;
+    var names = {};
+    spec.header.forEach(function (h) { names[h[0].toLowerCase()] = h; });
+    Object.keys(sheet.rows).forEach(function (rn) {
+      var row = sheet.rows[rn], a = row[1], b = row[2];
+      if (typeof a !== 'string' || b === undefined || b === null || typeof b === 'object') return;
+      var h = names[a.trim().toLowerCase()];
+      if (!h) return;
+      var type = spec.types[h[1]];
+      out[h[0]] = typeof b === 'number' && type.b === 'D' ? isoFromSerial(b) : String(b).trim();
+    });
+    return out;
+  }
+
+  return { read: read, readWorkbook: readWorkbook, readTemplate: readTemplate, readHeader: readHeader, unzip: unzip, colName: colName, toRaw: toRaw };
+});
+</script>
+<script>
+// A small .xlsx writer: sheets of numbers and text with a handful of styles,
+// compressed with the browser's (or Node's) own deflate. Enough to write a
+// report in the layout of the BSP input template; no formulas, no charts.
+//
+//   BSPV.xlsxwrite.write([{ name, cols: [widths], freeze: 'E9', rows: { 9: { 5: { v: 1.5, s: 'amount' } } } }])
+//     -> Promise of Uint8Array
+(function (root, factory) {
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  (root.BSPV = root.BSPV || {}).xlsxwrite = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  // Styles a cell can name. The order is the cellXfs order in styles.xml.
+  var STYLES = ['default', 'title', 'header', 'code', 'label', 'amount', 'count', 'text', 'calc', 'marker', 'blocked', 'subtitle', 'number'];
+  var STYLE_ID = {};
+  STYLES.forEach(function (s, i) { STYLE_ID[s] = i; });
+
+  var STYLES_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<numFmts count="2"><numFmt numFmtId="164" formatCode="#,##0.00;-#,##0.00"/><numFmt numFmtId="165" formatCode="#,##0"/></numFmts>' +
+    '<fonts count="4">' +
+      '<font><sz val="10"/><name val="Arial"/></font>' +
+      '<font><b/><sz val="10"/><name val="Arial"/></font>' +
+      '<font><b/><sz val="12"/><name val="Arial"/></font>' +
+      '<font><sz val="8"/><color rgb="FF595959"/><name val="Arial"/></font>' +
+    '</fonts>' +
+    '<fills count="6">' +
+      '<fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FF8497B0"/><bgColor indexed="64"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFAEAAAA"/><bgColor indexed="64"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFFFE4B5"/><bgColor indexed="64"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFF2F2F2"/><bgColor indexed="64"/></patternFill></fill>' +
+    '</fills>' +
+    '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>' +
+      '<border><left style="thin"><color rgb="FFBFBFBF"/></left><right style="thin"><color rgb="FFBFBFBF"/></right>' +
+      '<top style="thin"><color rgb="FFBFBFBF"/></top><bottom style="thin"><color rgb="FFBFBFBF"/></bottom><diagonal/></border></borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="13">' +
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +                                                        // default
+      '<xf numFmtId="0" fontId="2" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +                             // title
+      '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">' +
+        '<alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +                                                 // header
+      '<xf numFmtId="0" fontId="3" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">' +
+        '<alignment horizontal="center"/></xf>' +                                                                                // code
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>' + // label
+      '<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyProtection="1"><protection locked="0"/></xf>' + // amount
+      '<xf numFmtId="165" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyProtection="1"><protection locked="0"/></xf>' + // count
+      '<xf numFmtId="49" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyProtection="1"><protection locked="0"/></xf>' + // text
+      '<xf numFmtId="164" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1" applyBorder="1"/>' +    // calc
+      '<xf numFmtId="0" fontId="1" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +                             // marker
+      '<xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1"/>' +                           // blocked
+      '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +                                           // subtitle
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyProtection="1"><protection locked="0"/></xf>' + // number
+    '</cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+    '</styleSheet>';
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+      // characters XML 1.0 cannot carry at all
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  }
+
+  function colName(n) {
+    var s = '';
+    while (n > 0) { s = String.fromCharCode(65 + (n - 1) % 26) + s; n = Math.floor((n - 1) / 26); }
+    return s;
+  }
+
+  function sheetXml(sheet) {
+    var out = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'];
+    if (sheet.freeze) {
+      var m = /^([A-Z]+)(\d+)$/.exec(sheet.freeze);
+      var col = 0;
+      for (var i = 0; i < m[1].length; i++) col = col * 26 + (m[1].charCodeAt(i) - 64);
+      var xs = col - 1, ys = Number(m[2]) - 1;
+      out.push('<sheetViews><sheetView workbookViewId="0"><pane' + (xs ? ' xSplit="' + xs + '"' : '') + (ys ? ' ySplit="' + ys + '"' : '') +
+        ' topLeftCell="' + sheet.freeze + '" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>');
+    }
+    if (sheet.cols && sheet.cols.length) {
+      out.push('<cols>' + sheet.cols.map(function (w, i) { return '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>'; }).join('') + '</cols>');
+    }
+    out.push('<sheetData>');
+    Object.keys(sheet.rows).map(Number).sort(function (a, b) { return a - b; }).forEach(function (r) {
+      var row = sheet.rows[r], cells = [];
+      Object.keys(row).map(Number).sort(function (a, b) { return a - b; }).forEach(function (c) {
+        var cell = row[c], ref = colName(c) + r, s = STYLE_ID[cell.s || 'default'] || 0;
+        var attr = ' r="' + ref + '"' + (s ? ' s="' + s + '"' : '');
+        if (cell.v === undefined || cell.v === null || cell.v === '') cells.push('<c' + attr + '/>');
+        else if (typeof cell.v === 'number' && isFinite(cell.v)) cells.push('<c' + attr + '><v>' + cell.v + '</v></c>');
+        else cells.push('<c' + attr + ' t="inlineStr"><is><t xml:space="preserve">' + esc(cell.v) + '</t></is></c>');
+      });
+      out.push('<row r="' + r + '"' + (sheet.heights && sheet.heights[r] ? ' ht="' + sheet.heights[r] + '" customHeight="1"' : '') + '>' + cells.join('') + '</row>');
+    });
+    out.push('</sheetData>');
+    out.push('<pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/>');
+    out.push('</worksheet>');
+    return out.join('');
+  }
+
+  // ---- zip ---------------------------------------------------------------------
+
+  var CRC = null;
+  function crc32(bytes) {
+    if (!CRC) {
+      CRC = new Uint32Array(256);
+      for (var n = 0; n < 256; n++) {
+        var c = n;
+        for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+        CRC[n] = c >>> 0;
+      }
+    }
+    var crc = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) crc = CRC[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function deflate(bytes) {
+    if (typeof CompressionStream === 'undefined') return Promise.resolve(null);
+    var stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    return new Response(stream).arrayBuffer().then(function (b) { return new Uint8Array(b); });
+  }
+
+  function zip(files) {
+    var enc = new TextEncoder(), names = Object.keys(files);
+    return Promise.all(names.map(function (n) {
+      var raw = enc.encode(files[n]);
+      return deflate(raw).then(function (packed) {
+        return { name: enc.encode(n), raw: raw, body: packed || raw, method: packed ? 8 : 0, crc: crc32(raw) };
+      });
+    })).then(function (entries) {
+      var parts = [], central = [], offset = 0;
+      entries.forEach(function (e) {
+        var head = new DataView(new ArrayBuffer(30));
+        head.setUint32(0, 0x04034b50, true); head.setUint16(4, 20, true); head.setUint16(6, 0x0800, true); head.setUint16(8, e.method, true);
+        head.setUint32(14, e.crc, true); head.setUint32(18, e.body.length, true); head.setUint32(22, e.raw.length, true); head.setUint16(26, e.name.length, true);
+        var cen = new DataView(new ArrayBuffer(46));
+        cen.setUint32(0, 0x02014b50, true); cen.setUint16(4, 20, true); cen.setUint16(6, 20, true); cen.setUint16(8, 0x0800, true); cen.setUint16(10, e.method, true);
+        cen.setUint32(16, e.crc, true); cen.setUint32(20, e.body.length, true); cen.setUint32(24, e.raw.length, true); cen.setUint16(28, e.name.length, true);
+        cen.setUint32(42, offset, true);
+        parts.push(new Uint8Array(head.buffer), e.name, e.body);
+        central.push(new Uint8Array(cen.buffer), e.name);
+        offset += 30 + e.name.length + e.body.length;
+      });
+      var cdSize = central.reduce(function (s, p) { return s + p.length; }, 0);
+      var end = new DataView(new ArrayBuffer(22));
+      end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+      end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+      var all = parts.concat(central, [new Uint8Array(end.buffer)]);
+      var total = all.reduce(function (s, p) { return s + p.length; }, 0), out = new Uint8Array(total), at = 0;
+      all.forEach(function (p) { out.set(p, at); at += p.length; });
+      return out;
+    });
+  }
+
+  // sheets: [{ name, rows: { r: { c: { v, s } } }, cols, freeze, heights }]
+  function write(sheets) {
+    var files = {
+      '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+        '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+        sheets.map(function (s, i) { return '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'; }).join('') +
+        '</Types>',
+      '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+      'xl/workbook.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
+        sheets.map(function (s, i) { return '<sheet name="' + esc(s.name) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>'; }).join('') +
+        '</sheets></workbook>',
+      'xl/_rels/workbook.xml.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        sheets.map(function (s, i) { return '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>'; }).join('') +
+        '<Relationship Id="rId' + (sheets.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+        '</Relationships>',
+      'xl/styles.xml': STYLES_XML
+    };
+    sheets.forEach(function (s, i) { files['xl/worksheets/sheet' + (i + 1) + '.xml'] = sheetXml(s); });
+    return zip(files);
+  }
+
+  return { write: write, colName: colName, STYLES: STYLES };
+});
+</script>
+<script>
+// Writes a document as the XML submission file the report's schema describes,
+// laid out like the files the BSP portal saves (tabs, CRLF, cells in row order).
+// Used to turn a filled-in Excel input template into the file to send.
+//
+//   var out = BSPV.exporter.toXml(spec, doc, { now: new Date() });
+//   out.problems   cells or header fields that cannot be written; no file then
+//   out.rounded    amounts whose Excel rounding noise was dropped (98358232.8399999 -> 98358232.84)
+//   out.xml, out.name
+//
+//   BSPV.exporter.toXlsx(spec, doc, { now }) -> Promise of { bytes, notes, name }
+//   writes the same document as a workbook in the layout of the BSP input
+//   template, every schedule on its own sheet plus a Header sheet, so it can be
+//   edited in Excel and opened here again.
+(function (root, factory) {
+  var api;
+  if (typeof module !== 'undefined' && module.exports) {
+    api = module.exports = factory(require('./engine.js'), require('./xml.js'), require('./xlsxwrite.js'));
+  } else {
+    api = factory(root.BSPV.engine, root.BSPV.xml, root.BSPV.xlsxwrite);
+  }
+  (root.BSPV = root.BSPV || {}).exporter = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (ENGINE, XML, XLSXW) {
+  'use strict';
+
+  var NL = '\r\n', TAB = '\t';
+
+  function typeOf(spec, def) { return spec.types[Array.isArray(def[1]) ? def[1][0] : def[1]]; }
+
+  // The text of one value, or { problem }. A number that only failed because
+  // of binary noise beyond its allowed decimals is rounded, and said so.
+  function valueText(type, rec, where, out) {
+    if (!rec.bad) return { text: type.b === 's' ? rec.raw : String(rec.raw).trim() };
+    var raw = String(rec.raw).trim(), n = Number(raw);
+    if ((type.b === 'd' || type.b === 'i') && raw !== '' && isFinite(n) && type.fd !== undefined) {
+      var places = Number(type.fd), fixed = n.toFixed(places);
+      if (Math.abs(n - Number(fixed)) < 5e-7 && !ENGINE.checkValue(type, fixed).err) {
+        out.rounded.push({ where: where, from: raw, to: fixed });
+        return { text: fixed };
+      }
+    }
+    return { problem: where + ': "' + raw + '" ' + (ENGINE.checkValue(type, raw).err || 'cannot be written') + '.' };
+  }
+
+  function cellLines(spec, table, cells, indent, label, out) {
+    var lines = [];
+    Object.keys(table.c).forEach(function (code) {
+      var def = table.c[code], rec = cells[code];
+      if (!rec || def[0] !== 0) return;
+      var where = label + ' / ' + code + (rec.loc ? ' (' + rec.loc + ')' : '');
+      var r = valueText(typeOf(spec, def), rec, where, out);
+      if (r.problem) { out.problems.push(r.problem); return; }
+      lines.push(indent + '<' + code + '>' + XML.escape(r.text) + '</' + code + '>');
+    });
+    return lines;
+  }
+
+  function block(name, inner, indent) {
+    return inner.length ? [indent + '<' + name + '>'].concat(inner, [indent + '</' + name + '>']) : [indent + '<' + name + '/>'];
+  }
+
+  function formBody(spec, form, inst, indent, out) {
+    var lines = [];
+    var fields = (form.z ? [[form.z.f, form.z.ty]] : []).concat(form.f || []);
+    fields.forEach(function (f) {
+      var rec = inst.fields[f[0]];
+      if (!rec) return;
+      var r = valueText(spec.types[f[1]], rec, form.n + ' / ' + f[0], out);
+      if (r.problem) out.problems.push(r.problem);
+      else lines.push(indent + '<' + f[0] + '>' + XML.escape(r.text) + '</' + f[0] + '>');
+    });
+    form.tb.forEach(function (t) {
+      var data = inst.tables[t.n];
+      if (!data || !t.x) return;
+      var label = form.n + ' / ' + t.n;
+      if (t.k === 'S') {
+        lines = lines.concat(block(t.n, cellLines(spec, t, data.cells, indent + TAB, label, out), indent));
+        return;
+      }
+      var items = [];
+      data.items.forEach(function (it, i) {
+        items = items.concat(block(t.item, cellLines(spec, t, it.cells, indent + TAB + TAB, label + ' entry ' + (i + 1), out), indent + TAB));
+      });
+      lines = lines.concat(block(t.n, items, indent));
+    });
+    return lines;
+  }
+
+  function stamp(d) {
+    var p = function (n) { return ('0' + n).slice(-2); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + '_' + p(d.getHours()) + '-' + p(d.getMinutes()) + '-' + p(d.getSeconds());
+  }
+
+  // REPORT[_Year_Period]_<bank>_<YYYY-MM-DD_HH-MM-SS>.<ext>, as the portal names its files
+  function fileName(spec, doc, ext, now) {
+    var h = doc.header, v = function (k) { return h[k] && !h[k].bad ? String(h[k].raw).trim() : ''; };
+    var parts = [spec.report].concat(v('Year') && v('Period') ? [v('Year'), v('Period')] : [], v('Undertaking') ? [v('Undertaking')] : [], [stamp(now || new Date())]);
+    return parts.join('_') + '.' + ext;
+  }
+
+  function toXml(spec, doc, opts) {
+    opts = opts || {};
+    var out = { problems: [], rounded: [], xml: null, name: null };
+    if (doc.fatal) { out.problems.push('The file could not be read, so there is nothing to write.'); return out; }
+    var header = [];
+    spec.header.forEach(function (hd) {
+      var rec = doc.header[hd[0]];
+      if (!rec || rec.bad || rec.raw === undefined || String(rec.raw).trim() === '') {
+        out.problems.push('Header / ' + hd[0] + ' is ' + (rec && rec.bad ? 'not valid: "' + rec.raw + '"' : 'not given') + '.');
+        return;
+      }
+      header.push(TAB + TAB + '<' + hd[0] + '>' + XML.escape(String(rec.raw).trim()) + '</' + hd[0] + '>');
+    });
+    var lines = ['<?xml version="1.0" encoding="utf-8"?>', '<' + spec.root + ' xmlns="' + spec.ns + '">', TAB + '<Header>'].concat(header, [TAB + '</Header>']);
+    spec.forms.forEach(function (form) {
+      var list = doc.forms[form.n];
+      if (!list || !form.x) return;
+      if (form.z) {
+        var items = [];
+        list.forEach(function (inst) { items = items.concat(block(form.z.item, formBody(spec, form, inst, TAB + TAB + TAB, out), TAB + TAB)); });
+        lines = lines.concat(block(form.n, items, TAB));
+      } else {
+        lines = lines.concat(block(form.n, formBody(spec, form, list[0], TAB + TAB, out), TAB));
+      }
+    });
+    lines.push('</' + spec.root + '>');
+    if (out.problems.length) return out;
+    out.xml = lines.join(NL) + NL;
+    out.name = fileName(spec, doc, 'xml', opts.now);
+    return out;
+  }
+
+  // ---- workbook in the layout of the BSP input template ---------------------------
+
+  // What goes in a workbook cell: numbers stay numbers, everything else is text.
+  // A value that did not pass its format check is kept as typed, to be fixed there.
+  function bookValue(type, rec) {
+    if (!rec) return undefined;
+    if (rec.bad) return String(rec.raw);
+    if ((type.b === 'd' || type.b === 'i') && typeof rec.v === 'number') return rec.v;
+    return String(rec.v === null || rec.v === undefined ? rec.raw : rec.v);
+  }
+
+  function inputStyle(type) {
+    if (type.b === 'i' || (type.b === 'd' && Number(type.fd) === 0)) return 'count';
+    if (type.b === 'd') return Number(type.fd) === 2 ? 'amount' : 'number';
+    return 'text';
+  }
+
+  var BLANK_LIST_ROWS = 15;
+
+  function formSheet(spec, form, inst, notes) {
+    var rows = {}, maxCol = 5;
+    function put(r, c, v, s) { (rows[r] = rows[r] || {})[c] = { v: v, s: s }; if (c > maxCol) maxCol = c; }
+    function headerRows(r, labels, codes, first) {
+      put(r, 2, 'Particulars', 'header'); put(r, 3, 'Account Code', 'header'); put(r, 4, '', 'header');
+      put(r + 1, 2, '', 'code'); put(r + 1, 3, '', 'code'); put(r + 1, 4, '', 'code');
+      labels.forEach(function (l, i) { put(r, first + i, l, 'header'); put(r + 1, first + i, codes[i], 'code'); });
+    }
+    put(1, 1, form.n, 'title');
+    put(2, 1, form.t, 'subtitle');
+    var r = 4;
+    var fields = (form.z ? [[form.z.f, form.z.ty, form.z.t]] : []).concat(form.f || []);
+    fields.forEach(function (f) {
+      var type = spec.types[f[1]];
+      put(r, 1, f[0], 'marker');
+      put(r + 1, 1, f[2] || f[0], 'subtitle');
+      put(r + 2, 1, inst ? bookValue(type, inst.fields[f[0]]) : undefined, inputStyle(type));
+      r += 4;
+    });
+    form.tb.forEach(function (t) {
+      if (!t.x) return;
+      var data = inst && inst.tables[t.n];
+      put(r, 1, t.n, 'marker');
+      if (t.t) put(r, 2, t.t, 'subtitle');
+      r += 1;
+      var cell = function (row, col, code, rec) {
+        var def = t.c[code];
+        if (!def) put(row, col, undefined, 'blocked');
+        else if (def[0] !== 0) put(row, col, undefined, 'calc');
+        else put(row, col, bookValue(typeOf(spec, def), rec), inputStyle(typeOf(spec, def)));
+      };
+      if (t.k === 'S') {
+        var cols = t.cols.map(function (c) { return c[0]; });
+        headerRows(r, cols.map(function (c) { return t.colLabel[c] || c; }), cols, 5);
+        r += 2;
+        t.rows.forEach(function (row) {
+          put(r, 2, row[1], 'label'); put(r, 3, row[2], 'label'); put(r, 4, row[0], 'code');
+          cols.forEach(function (c, i) { cell(r, 5 + i, row[0] + c, data && data.cells[row[0] + c]); });
+          r++;
+        });
+      } else if (t.k === 'Y') {
+        var ycols = t.cols.map(function (c) { return c[0]; });
+        headerRows(r, ycols.map(function (c) { return t.colLabel[c] || c; }), ycols, 5);
+        r += 2;
+        var items = (data && data.items) || [];
+        items.concat(new Array(BLANK_LIST_ROWS).fill(null)).forEach(function (it) {
+          put(r, 2, undefined, 'label'); put(r, 3, undefined, 'label'); put(r, 4, undefined, 'label');
+          ycols.forEach(function (c, i) { cell(r, 5 + i, c, it ? it.cells[c] : undefined); });
+          r++;
+        });
+      } else {
+        // a list that runs across: one column per entry (or one group of columns
+        // when every entry has several measures), the row codes down the side
+        var codes = Object.keys(t.c);
+        var measures = [];
+        codes.forEach(function (c) { var m = /^R\d{4}(C\d{4})$/.exec(c); if (m && measures.indexOf(m[1]) < 0) measures.push(m[1]); });
+        var rowCodes = [];
+        codes.forEach(function (c) { var k = measures.length && /^R\d{4}C\d{4}$/.test(c) ? c.slice(0, 5) : c; if (rowCodes.indexOf(k) < 0) rowCodes.push(k); });
+        var xitems = ((data && data.items) || []).concat([null, null, null]);
+        var width = Math.max(1, measures.length);
+        var labels = [], hcodes = [];
+        xitems.forEach(function (it, i) {
+          for (var m = 0; m < width; m++) {
+            labels.push('Entry ' + (i + 1) + (measures.length ? ' / ' + (t.colLabel[measures[m]] || measures[m]) : ''));
+            hcodes.push(measures.length ? measures[m] : '');
+          }
+        });
+        headerRows(r, labels, hcodes, 5);
+        if (!measures.length) delete rows[r + 1];          // no column codes for a single-measure list
+        r += measures.length ? 2 : 1;
+        rowCodes.forEach(function (rc) {
+          var label = t.rowLabel[rc];
+          put(r, 2, label ? label[1] : '', 'label'); put(r, 3, label ? label[2] : '', 'label'); put(r, 4, rc, 'code');
+          xitems.forEach(function (it, i) {
+            for (var m = 0; m < width; m++) {
+              var col = 5 + i * width + m, code = measures.length && t.c[rc + measures[m]] ? rc + measures[m] : rc;
+              if (code === rc && m > 0) { put(r, col, undefined, 'blocked'); continue; }
+              cell(r, col, code, it ? it.cells[code] : undefined);
+            }
+          });
+          r++;
+        });
+      }
+      r += 2;
+    });
+    var widths = [14, 50, 20, 9];
+    for (var c = 5; c <= maxCol; c++) widths.push(18);
+    return { name: form.n, rows: rows, cols: widths };
+  }
+
+  // Schedules in the file with no value at all, such as <BRIS_LDR/>. An empty
+  // sheet is read as a schedule not submitted, so the Header sheet lists these.
+  function filedEmpty(spec, doc) {
+    return spec.forms.filter(function (form) {
+      var list = doc.forms[form.n];
+      if (!form.x || !list) return false;
+      return list.every(function (inst) {
+        if (Object.keys(inst.fields).length) return false;
+        return Object.keys(inst.tables).every(function (tn) {
+          var t = inst.tables[tn];
+          return t.items ? t.items.every(function (it) { return !Object.keys(it.cells).length; }) : !Object.keys(t.cells).length;
+        });
+      });
+    }).map(function (form) { return form.n; });
+  }
+
+  function headerSheet(spec, doc) {
+    var rows = {};
+    function put(r, c, v, s) { (rows[r] = rows[r] || {})[c] = { v: v, s: s }; }
+    put(1, 1, 'Header', 'title');
+    put(2, 1, spec.report + ' version ' + spec.version + (spec.title ? ' - ' + spec.title : '') +
+      '. Bank code and reporting period of this file; the validator reads them back from here.', 'subtitle');
+    var r = 4;
+    spec.header.forEach(function (hd) {
+      var rec = doc.header[hd[0]], type = spec.types[hd[1]];
+      put(r, 1, hd[0], 'marker');
+      put(r, 2, rec && !rec.bad ? (type.b === 'i' ? rec.v : String(rec.raw).trim()) : (rec ? String(rec.raw) : undefined), type.b === 'i' ? 'count' : 'text');
+      r++;
+    });
+    put(r + 1, 1, 'Filed empty', 'marker');
+    put(r + 1, 2, filedEmpty(spec, doc).join(' ') || undefined, 'text');
+    put(r + 2, 2, 'Schedules to send with no data (as <NAME/> in the XML), separated by spaces. Any other sheet left empty is not sent.', 'subtitle');
+    return { name: 'Header', rows: rows, cols: [16, 60] };
+  }
+
+  function toXlsx(spec, doc, opts) {
+    opts = opts || {};
+    var notes = [];
+    if (doc.fatal) return Promise.resolve({ bytes: null, notes: ['The file could not be read, so there is nothing to write.'] });
+    var sheets = [headerSheet(spec, doc)];
+    // values the file holds where the template has no input cell
+    var dropped = doc.findings.filter(function (f) { return /^(XSD-CALCULATED|XSD-UNKNOWN|TPL-NOT-INPUT)$/.test(f.code) && f.cell; })
+      .map(function (f) { return f.form + ' / ' + (f.table ? f.table + ' / ' : '') + f.cell; });
+    if (dropped.length) notes.push('Left out, as the template has no input cell for them (totals the BSP works out, or cells the schema does not know): ' + dropped.join(', ') + '.');
+    spec.forms.forEach(function (form) {
+      if (!form.x) return;
+      var list = doc.forms[form.n];
+      if (list && list.length > 1) notes.push(form.n + ' has ' + list.length + ' book codes; the workbook holds only the first.');
+      sheets.push(formSheet(spec, form, list && list[0], notes));
+    });
+    return XLSXW.write(sheets).then(function (bytes) { return { bytes: bytes, notes: notes, name: fileName(spec, doc, 'xlsx', opts.now) }; });
+  }
+
+  return { toXml: toXml, toXlsx: toXlsx, fileName: fileName };
+});
+</script>
+<script>
+// Changes to a document made in the page's schedule editor. Each call checks
+// the new value against its format, keeps the document's own findings in step,
+// and counts the edit, so the page can re-run the rules and warn before leaving.
+//
+//   BSPV.edit.setValue(spec, doc, { form, table, cell, item }, raw)  -> error text or null
+//   BSPV.edit.setField(spec, doc, form, field, raw)                  -> error text or null
+//   BSPV.edit.setHeader(spec, doc, name, raw, quiet)                 -> error text or null
+//     (quiet: copying the page's period fields into a template; not counted as an edit)
+//   BSPV.edit.addItem(spec, doc, form, table)                        -> new entry number
+//   BSPV.edit.removeItem(spec, doc, form, table, index)
+(function (root, factory) {
+  var api;
+  if (typeof module !== 'undefined' && module.exports) api = module.exports = factory(require('./engine.js'), require('./spec.js'));
+  else api = factory(root.BSPV.engine, root.BSPV.spec);
+  (root.BSPV = root.BSPV || {}).edit = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (ENGINE, SPEC) {
+  'use strict';
+
+  function instance(spec, doc, formName) {
+    var form = spec.formByName[formName];
+    if (!form || !form.x) throw new Error(formName + ' is not a schedule of the file.');
+    if (!doc.forms[formName] || !doc.forms[formName].length) doc.forms[formName] = [{ name: formName, fields: {}, tables: {} }];
+    return { form: form, inst: doc.forms[formName][0] };
+  }
+
+  function tableData(form, inst, tableName) {
+    var t = form.tableByName[tableName];
+    if (!t || !t.x) throw new Error(form.n + ' / ' + tableName + ' is not a table of the file.');
+    if (!inst.tables[tableName]) inst.tables[tableName] = t.k === 'S' ? { cells: {} } : { items: [] };
+    return { t: t, data: inst.tables[tableName] };
+  }
+
+  function same(f, at) {
+    return f.form === at.form && (f.table || null) === (at.table || null) && f.cell === at.cell &&
+      (f.item === undefined ? null : f.item) === (at.item === undefined || at.item === null ? null : at.item);
+  }
+
+  // Stores one value. An empty value removes the cell. Returns the format
+  // problem as text, or null; a bad value is kept as typed so it can be fixed.
+  function store(doc, holder, key, type, raw, at, label, quiet) {
+    doc.findings = doc.findings.filter(function (f) { return !(f.kind === 'file' && /^(XSD-TYPE|TPL-ERROR-VALUE|XSD-REQUIRED)$/.test(f.code) && same(f, at)); });
+    if (!quiet) doc.edited = (doc.edited || 0) + 1;
+    var text = raw === null || raw === undefined ? '' : String(raw);
+    if (type.b !== 's') text = text.trim();
+    // typed on the page, 1,234,567.89 means 1234567.89
+    if ((type.b === 'd' || type.b === 'i') && /^[-+]?\d{1,3}(,\d{3})+(\.\d*)?$/.test(text)) text = text.replace(/,/g, '');
+    var old = holder[key];
+    if (text === '') { delete holder[key]; return null; }
+    var r = ENGINE.checkValue(type, text);
+    var rec = { raw: text, v: r.err ? null : r.v, edited: true };
+    if (old && old.loc) rec.loc = old.loc;
+    if (r.err) {
+      rec.bad = true;
+      var f = { sev: 'error', code: 'XSD-TYPE', kind: 'file', msg: label + ': "' + text.slice(0, 60) + '" ' + r.err + '.', loc: rec.loc };
+      Object.keys(at).forEach(function (k) { if (at[k] !== undefined && at[k] !== null) f[k] = at[k]; });
+      doc.findings.push(f);
+    }
+    holder[key] = rec;
+    return r.err || null;
+  }
+
+  function typeOf(spec, def) { return spec.types[Array.isArray(def[1]) ? def[1][0] : def[1]]; }
+
+  function setValue(spec, doc, at, raw) {
+    var x = instance(spec, doc, at.form), td = tableData(x.form, x.inst, at.table);
+    var def = td.t.c[at.cell];
+    if (!def || def[0] !== 0) throw new Error(at.form + ' / ' + at.table + ' / ' + at.cell + ' is worked out by the BSP; it cannot be typed in.');
+    var cells;
+    if (td.t.k === 'S') {
+      cells = td.data.cells;
+    } else {
+      var it = td.data.items[at.item];
+      if (!it) throw new Error('There is no entry ' + (Number(at.item) + 1) + ' in ' + at.form + ' / ' + at.table + '.');
+      cells = it.cells;
+    }
+    var label = at.form + ' / ' + at.table + (td.t.k === 'S' ? '' : ' entry ' + (Number(at.item) + 1)) + ' / ' + at.cell;
+    return store(doc, cells, at.cell, typeOf(spec, def), raw, { form: at.form, table: at.table, cell: at.cell, item: td.t.k === 'S' ? undefined : Number(at.item) }, label);
+  }
+
+  function setField(spec, doc, formName, field, raw) {
+    var x = instance(spec, doc, formName);
+    var f = x.form.fieldByName[field] || (x.form.z && x.form.z.f === field ? [x.form.z.f, x.form.z.ty] : null);
+    if (!f) throw new Error(formName + ' has no field ' + field + '.');
+    return store(doc, x.inst.fields, field, spec.types[f[1]], raw, { form: formName, cell: field }, formName + ' / ' + field);
+  }
+
+  function setHeader(spec, doc, name, raw, quiet) {
+    var h = spec.header.filter(function (x) { return x[0] === name; })[0];
+    if (!h) throw new Error('The header has no field ' + name + '.');
+    doc.findings = doc.findings.filter(function (f) { return !(f.form === 'Header' && f.cell === name) && !(f.code === 'XSD-HEADER' && new RegExp('\\b' + name + '\\b').test(f.msg)); });
+    var err = store(doc, doc.header, name, spec.types[h[1]], raw, { form: 'Header', cell: name }, 'Header / ' + name, quiet);
+    if (!doc.header[name]) {
+      doc.findings.push({ sev: 'error', code: 'XSD-HEADER', kind: 'file', form: 'Header', cell: name, msg: 'Header / ' + name + ' is not filled in. It is required.' });
+    }
+    return err;
+  }
+
+  function addItem(spec, doc, formName, tableName) {
+    var x = instance(spec, doc, formName), td = tableData(x.form, x.inst, tableName);
+    if (td.t.k === 'S') throw new Error(tableName + ' is not a list.');
+    td.data.items.push({ index: td.data.items.length, cells: {} });
+    doc.edited = (doc.edited || 0) + 1;
+    return td.data.items.length - 1;
+  }
+
+  function removeItem(spec, doc, formName, tableName, index) {
+    var x = instance(spec, doc, formName), td = tableData(x.form, x.inst, tableName);
+    td.data.items.splice(index, 1);
+    td.data.items.forEach(function (it, i) {
+      it.index = i;
+      Object.keys(it.cells).forEach(function (c) { if (it.cells[c].item !== undefined) it.cells[c].item = i; });
+    });
+    doc.findings = doc.findings.filter(function (f) {
+      if (f.form !== formName || f.table !== tableName || f.item === undefined) return true;
+      if (f.item === index) return false;
+      if (f.item > index) f.item--;
+      return true;
+    });
+    doc.edited = (doc.edited || 0) + 1;
+  }
+
+  return { setValue: setValue, setField: setField, setHeader: setHeader, addItem: addItem, removeItem: removeItem, label: SPEC.cellLabel };
 });
 </script>
 <script>
 // Page behaviour: reads the chosen file, runs the engine, shows the result.
 (function () {
   'use strict';
-  var B = self.BSPV, ENGINE = B.engine, TEMPLATE = B.template, SPEC = B.spec;
+  var B = self.BSPV, ENGINE = B.engine, TEMPLATE = B.template, SPEC = B.spec, EDIT = B.edit, EXPORT = B.exporter;
   var fmt = ENGINE.fmt;
 
   function $(id) { return document.getElementById(id); }
@@ -2630,7 +3307,10 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
   var state = {
     spec: null,         // the report definition in use
     header: {},         // report -> values typed into the reporting period fields
-    input: null,        // { name, bytes }
+    input: null,        // { name, bytes, fresh }
+    doc: null,          // the file as read, with the changes made in the Schedules tab
+    saved: 0,           // doc.edited when it was last exported
+    editing: false,
     result: null,
     history: {},        // 'YYYY-MM' -> { doc, name }
     sev: { error: true, warning: true, info: true },
@@ -2824,6 +3504,8 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
       var book = await TEMPLATE.readWorkbook(input.bytes);
       found = SPEC.detectSheets(book.sheets.map(function (sh) { return sh.name; }));
       if (found && found !== state.spec.report) await useReport(found);
+      // a workbook exported from here carries its bank code and period in a Header sheet
+      if (input.fresh) applyHeader(TEMPLATE.readHeader(book, state.spec));
       return TEMPLATE.readTemplate(book, state.spec, headerValues());
     }
     if (kind === 'zip') {
@@ -2841,24 +3523,59 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     return ENGINE.readXmlBytes(input.bytes, state.spec);
   }
 
+  // Sets the reporting period fields to the values a file carries.
+  function applyHeader(values) {
+    var keep = state.header[state.spec.report] = state.header[state.spec.report] || {};
+    Object.keys(values).forEach(function (k) {
+      var el = $('h-' + k), v = String(values[k]);
+      if (!el) return;
+      if (el.tagName === 'SELECT' && /^\d+$/.test(v)) v = String(Number(v));
+      el.value = v;
+      keep[k] = el.value;
+    });
+  }
+
+  // A template takes its bank code and period from the fields above; after
+  // changes were made here they are copied in, instead of reading it again.
+  function syncHeader(doc) {
+    var hv = headerValues();
+    state.spec.header.forEach(function (hd) {
+      var cur = doc.header[hd[0]], want = hv[hd[0]] || '';
+      if (cur ? String(cur.raw) === want : want === '') return;
+      EDIT.setHeader(state.spec, doc, hd[0], want);
+    });
+  }
+
+  function checkDoc() {
+    var hist = {};
+    Object.keys(state.history).forEach(function (k) { hist[k] = state.history[k].doc; });
+    var p = profile();
+    state.result = ENGINE.check(state.spec, state.doc, { profile: p, history: hist });
+    state.result.profile = p;
+  }
+
   async function run() {
     if (!state.input || !state.spec) return;
     fail('');
+    // an unchanged template is read again, with the period fields as they are now
+    if (state.doc && state.doc.source === 'xlsx' && !state.doc.edited) state.doc = null;
     busy('Checking ' + state.input.name + '...');
     await tick();
     try {
-      var doc = await toDoc(state.input);
-      var hist = {};
-      Object.keys(state.history).forEach(function (k) { hist[k] = state.history[k].doc; });
-      var p = profile();
-      state.result = ENGINE.check(state.spec, doc, { profile: p, history: hist });
-      state.result.profile = p;
+      if (!state.doc) {
+        state.doc = await toDoc(state.input);
+        state.input.fresh = false;
+      } else if (state.doc.source === 'xlsx' && !state.doc.fatal) {
+        syncHeader(state.doc);
+      }
+      checkDoc();
       state.open = {};
       state.shown = {};
       render();
       saveSetup();
     } catch (e) {
       state.result = null;
+      state.doc = null;
       $('results').hidden = true;
       $('empty').hidden = false;
       fail(e && e.message ? e.message : String(e));
@@ -2866,10 +3583,30 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     busy('');
   }
 
+  function unsaved() { return !!(state.doc && (state.doc.edited || 0) > state.saved); }
+
   async function chooseFile(file) {
     if (!file) return;
-    state.input = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+    if (unsaved() && !window.confirm('The changes made on this page to ' + state.input.name + ' have not been exported. Open ' + file.name + ' anyway and lose them?')) return;
+    state.input = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), fresh: true };
+    state.doc = null;
+    state.saved = 0;
     run();
+  }
+
+  // After a change in the Schedules tab: the rules run again on the changed file.
+  var recheckTimer = null;
+  function recheck(rebuild) {
+    clearTimeout(recheckTimer);
+    var go = function () {
+      try {
+        checkDoc();
+        render({ keepSchedule: !rebuild });
+      } catch (e) {
+        fail(e && e.message ? e.message : String(e));
+      }
+    };
+    if (rebuild) go(); else recheckTimer = setTimeout(go, 120);
   }
 
   async function addHistory(files) {
@@ -2957,7 +3694,8 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     other: 'could not be worked out (for example a ratio with a zero base)'
   };
 
-  function render() {
+  function render(opts) {
+    opts = opts || {};
     var r = state.result, doc = r.doc, st = r.stats, c = r.counts;
     $('empty').hidden = true;
     var box = clear($('results'));
@@ -2979,7 +3717,8 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     }
     box.appendChild(h('div', { class: 'verdict ' + r.verdict },
       h('span', { class: 'glyph', 'aria-hidden': 'true' }, r.verdict === 'ok' ? 'OK' : '!'),
-      h('div', null, h('h2', null, title), h('p', null, state.input.name + (state.input.inner ? ' > ' + state.input.inner : '') + '. ' + sub))));
+      h('div', null, h('h2', null, title), h('p', null, state.input.name + (state.input.inner ? ' > ' + state.input.inner : '') +
+        (doc.edited ? ', with ' + doc.edited + (doc.edited === 1 ? ' change' : ' changes') + ' made on this page' : '') + '. ' + sub))));
 
     if (st.skippedTotal) {
       var parts = Object.keys(st.skipped).map(function (k) { return st.skipped[k].toLocaleString('en-US') + ' ' + SKIP_WORDS[k]; });
@@ -3021,10 +3760,11 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
         ['Not checked', st.skippedTotal]
       ]), h('p', { class: 'card-foot' }, 'Checked as: ' + profileSummary() + '.'))));
 
+    if (!doc.fatal && EXPORT) box.appendChild(exportCard());
     if (B.send) B.send.render(box, { input: state.input, result: r, spec: state.spec });
 
     if (!r.findings.length) {
-      renderSchedules();
+      if (opts.keepSchedule) refreshSchedule(); else renderSchedules();
       return;
     }
 
@@ -3063,7 +3803,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     box.appendChild(tools);
     box.appendChild(h('div', { class: 'groups', id: 'groups' }));
     renderGroups();
-    renderSchedules();
+    if (opts.keepSchedule) refreshSchedule(); else renderSchedules();
   }
 
   function renderGroups() {
@@ -3177,6 +3917,76 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     return body;
   }
 
+  // ---- export --------------------------------------------------------------
+
+  function download(data, name, type) {
+    var a = h('a', { href: URL.createObjectURL(new Blob([data], { type: type })), download: name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  // The file as an Excel workbook in the layout of the BSP input template, with
+  // a Header sheet for the bank code and period, to be edited in Excel and
+  // opened here again.
+  async function exportXlsx(note) {
+    clear(note).appendChild(h('p', { class: 'muted' }, 'Writing the workbook...'));
+    try {
+      var out = await EXPORT.toXlsx(state.spec, state.doc);
+      clear(note);
+      if (!out.bytes) { note.appendChild(h('p', { class: 'fail' }, out.notes.join(' '))); return; }
+      download(out.bytes, out.name, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      state.saved = state.doc.edited || 0;
+      editStatus();
+      note.appendChild(h('p', null, 'Saved ' + out.name + ' to your Downloads folder.'));
+      note.appendChild(h('p', { class: 'muted' }, 'Edit it in Excel: type in the white cells only; grey cells are totals the BSP works out, and list sheets have ' +
+        'blank rows (or columns) for new entries. The Header sheet keeps the bank code and period. Save it, then drop it here again to check it and export the XML.'));
+      out.notes.forEach(function (n) { note.appendChild(h('p', { class: 'muted' }, n)); });
+    } catch (e) {
+      clear(note).appendChild(h('p', { class: 'fail' }, 'The workbook could not be written: ' + (e && e.message ? e.message : e)));
+    }
+  }
+
+  // The XML submission file. On the page served by `node submit.js ui` the new
+  // file is opened right away, ready to send.
+  function exportXml(note) {
+    var out = EXPORT.toXml(state.spec, state.doc);
+    clear(note);
+    if (out.problems.length) {
+      note.appendChild(h('p', { class: 'fail' }, 'No XML written. Fix these first: ' + out.problems.join(' ')));
+      return;
+    }
+    download(out.xml, out.name, 'application/xml');
+    state.saved = state.doc.edited || 0;
+    editStatus();
+    note.appendChild(h('p', null, 'Saved ' + out.name + ' to your Downloads folder.' + (out.rounded.length ? ' Rounded: ' +
+      out.rounded.map(function (x) { return x.where + ' ' + x.from + ' to ' + x.to; }).join('; ') + '.' : '')));
+    if (self.BSPV_LOCAL) {
+      note.appendChild(h('p', { class: 'muted' }, 'Opening the XML here so it can be checked and sent...'));
+      setTimeout(function () { chooseFile(new File([out.xml], out.name, { type: 'application/xml' })); }, 400);
+    } else {
+      note.appendChild(h('p', { class: 'muted' }, 'Open that file here to check it before sending.'));
+    }
+  }
+
+  function exportCard() {
+    var doc = state.doc;
+    var card = h('div', { class: 'card sendcard' }, h('h3', null, 'Export'));
+    var note = h('div', { class: 'send-log' });
+    var what = doc.source === 'xlsx' ? 'this workbook' : 'this XML file';
+    card.appendChild(h('p', { class: 'muted' },
+      'Export to Excel writes ' + what + ' as a workbook laid out like the BSP input template, to edit in Excel instead of on the portal. ' +
+      'Export to XML writes the submission file for the BSP' + (doc.source === 'xlsx' ? ', with the bank code and period entered above' : '') + '. ' +
+      'Values can also be changed on this page: Schedules tab, Edit values.' +
+      (doc.edited ? ' Both include the ' + doc.edited + (doc.edited === 1 ? ' change' : ' changes') + ' made here' + (unsaved() ? ', not exported yet.' : '.') : '')));
+    card.appendChild(h('div', { class: 'row' },
+      h('button', { class: 'btn', type: 'button', onclick: function () { exportXlsx(note); } }, 'Export to Excel'),
+      h('button', { class: 'btn primary', type: 'button', onclick: function () { exportXml(note); } }, 'Export to XML')));
+    card.appendChild(note);
+    return card;
+  }
+
   function exportCsv() {
     var rows = [['Severity', 'Code', 'Schedule', 'Table', 'Cell', 'Entry', 'Where', 'Message', 'Left', 'Operator', 'Right', 'Difference', 'Tolerance', 'Left formula', 'Right formula']];
     state.result.findings.forEach(function (f) {
@@ -3207,10 +4017,16 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     $('schedules-empty').hidden = !!ok;
     $('schedules').hidden = !ok;
     if (!ok) return;
-    var counts = {};
+    var first = fillPick();
+    if (!state.form || !state.spec.formByName[state.form]) state.form = first || state.spec.forms[0].n;
+    $('schedule-pick').value = state.form;
+    renderSchedule();
+  }
+
+  function fillPick() {
+    var r = state.result, counts = {}, first = null;
     r.findings.forEach(function (f) { if (f.form) counts[f.form] = (counts[f.form] || 0) + 1; });
     var pick = clear($('schedule-pick'));
-    var first = null;
     state.spec.forms.forEach(function (f) {
       var present = r.evaluator.present(f.n);
       if (present && !first) first = f.n;
@@ -3218,9 +4034,69 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
         (counts[f.n] ? ', ' + counts[f.n] + ' findings' : '');
       pick.appendChild(h('option', { value: f.n }, f.n + '  -  ' + f.t.slice(0, 70) + '  (' + note + ')'));
     });
-    if (!state.form || !state.spec.formByName[state.form]) state.form = first || state.spec.forms[0].n;
     pick.value = state.form;
-    renderSchedule();
+    return first;
+  }
+
+  // After an edit: totals, findings and markings brought up to date in place,
+  // so the cell being typed in keeps its focus.
+  function refreshSchedule() {
+    var r = state.result;
+    if (!r || !r.evaluator || $('schedules').hidden) { renderSchedules(); return; }
+    fillPick();
+    var form = state.spec.formByName[state.form], hits = cellHits(form.n);
+    Array.prototype.forEach.call($('schedule-view').querySelectorAll('td[data-c]'), function (td) {
+      var i = td.getAttribute('data-i');
+      paintCell(td, r.evaluator, form, form.tableByName[td.getAttribute('data-t')], td.getAttribute('data-c'), i === '' ? undefined : Number(i), hits);
+    });
+    editStatus();
+  }
+
+  function editStatus() {
+    var doc = state.doc, n = doc ? doc.edited || 0 : 0;
+    $('editbar').hidden = !(state.editing || n);
+    $('edit-status').textContent = !n ? 'No changes yet. Type over a value and press Enter or Tab; the rules run again by themselves.'
+      : n + (n === 1 ? ' change' : ' changes') + ' made on this page' + (unsaved() ? ', not exported yet. Export to keep them.' : ', exported.');
+  }
+
+  // The record of one reported cell in the document, or undefined.
+  function recordOf(form, table, code, item) {
+    var inst = state.doc && state.doc.forms[form.n] && state.doc.forms[form.n][0];
+    var data = inst && inst.tables[table.n];
+    if (!data) return undefined;
+    if (table.k === 'S') return data.cells[code];
+    var it = data.items[item];
+    return it && it.cells[code];
+  }
+
+  function canEdit(form, table) { return state.editing && form.x && (!table || table.x) && !state.doc.fatal; }
+
+  // A number is shown with thousands separators; a value that is not valid, as typed.
+  function inputText(rec) {
+    if (!rec) return '';
+    return !rec.bad && typeof rec.v === 'number' ? fmt(rec.v) : String(rec.raw);
+  }
+
+  function editCell(form, table, code, item, input) {
+    var wasPresent = !!state.doc.forms[form.n];
+    try {
+      EDIT.setValue(state.spec, state.doc, { form: form.n, table: table.n, cell: code, item: item }, input.value);
+    } catch (e) {
+      fail(e.message);
+      return;
+    }
+    input.value = inputText(recordOf(form, table, code, item));
+    recheck(!wasPresent);
+  }
+
+  // Enter moves down a column, as in Excel.
+  function nextDown(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    var td = e.target.parentNode, tr = td.parentNode, idx = Array.prototype.indexOf.call(tr.children, td);
+    var next = tr.nextElementSibling;
+    while (next && !(next.children[idx] && next.children[idx].querySelector('input'))) next = next.nextElementSibling;
+    if (next) { var inp = next.children[idx].querySelector('input'); inp.focus(); inp.select(); } else e.target.blur();
   }
 
   function cellHits(formName) {
@@ -3242,15 +4118,72 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
   function valueCell(ev, form, table, code, item, hits) {
     var def = table.c[code];
     if (!def) return h('td', { class: 'none', title: 'Not a cell of this table' });
+    var td = h('td', { 'data-t': table.n, 'data-c': code, 'data-i': item === undefined ? '' : String(item) });
+    if (def[0] === 0 && canEdit(form, table)) {
+      var rec = recordOf(form, table, code, item);
+      var input = h('input', {
+        type: 'text', class: 'cell-in', spellcheck: 'false', autocomplete: 'off',
+        'aria-label': form.n + ' ' + table.n + ' ' + code + (item === undefined ? '' : ' entry ' + (item + 1))
+      });
+      input.value = inputText(rec);
+      input.addEventListener('change', function () { editCell(form, table, code, item, input); });
+      input.addEventListener('keydown', nextDown);
+      td.appendChild(input);
+    }
+    paintCell(td, ev, form, table, code, item, hits);
+    return td;
+  }
+
+  function paintCell(td, ev, form, table, code, item, hits) {
+    var def = table.c[code];
     var v = ev.valueOf(form.n, table.n, code, item);
     var cls = def[0] === 0 ? '' : 'calc';
     var title = def[0] === 1 ? 'BSP total = ' + def[1] : def[0] === 2 ? 'Fixed by the BSP' : code;
     var hit = hits[table.n + '|' + code + '|' + (item === undefined ? '' : item)];
     if (hit) cls += ' hit-' + hit;
-    if (ENGINE.isUnknown(v)) return h('td', { class: cls + ' unknown', title: 'Not known: ' + v.why }, '?');
-    if (typeof v === 'string') return h('td', { class: cls + ' txt', title: title }, v);
-    if (v === null) return h('td', { class: cls, title: title }, '');
-    return h('td', { class: cls + (v === 0 ? ' zero' : ''), title: title }, fmt(v));
+    var input = td.firstChild && td.firstChild.tagName === 'INPUT' ? td.firstChild : null;
+    if (input) {
+      var rec = recordOf(form, table, code, item);
+      var type = ENGINE.isUnknown(v) || typeof v !== 'string' ? '' : ' txt';
+      td.className = cls + ' edit' + type + (rec && rec.bad ? ' bad' : '');
+      td.title = rec && rec.bad ? 'Not in the right format; see the findings' : code;
+      return;
+    }
+    clear(td);
+    if (ENGINE.isUnknown(v)) { td.className = cls + ' unknown'; td.title = 'Not known: ' + v.why; td.textContent = '?'; return; }
+    td.title = title;
+    if (typeof v === 'string') { td.className = cls + ' txt'; td.textContent = v; return; }
+    if (v === null) { td.className = cls; return; }
+    td.className = cls + (v === 0 ? ' zero' : '');
+    td.textContent = fmt(v);
+  }
+
+  function listButtons(form, table, wrap, count) {
+    if (!canEdit(form, table)) return;
+    wrap.appendChild(h('div', { class: 'row list-tools' },
+      h('button', {
+        class: 'btn small', type: 'button',
+        onclick: function () { EDIT.addItem(state.spec, state.doc, form.n, table.n); recheck(true); }
+      }, 'Add entry'),
+      h('span', { class: 'muted' }, count + (count === 1 ? ' entry' : ' entries') + '. An entry with no values is left out of the exported file.')));
+  }
+
+  function removeButton(form, table, i) {
+    return h('button', {
+      class: 'xbtn', type: 'button', title: 'Remove entry ' + (i + 1), 'aria-label': 'Remove entry ' + (i + 1) + ' of ' + table.n,
+      onclick: function () {
+        if (!window.confirm('Remove entry ' + (i + 1) + ' of ' + form.n + ' / ' + table.n + '?')) return;
+        EDIT.removeItem(state.spec, state.doc, form.n, table.n, i);
+        recheck(true);
+      }
+    }, 'x');
+  }
+
+  function fieldEditor(form, label, value, onchange) {
+    var input = h('input', { type: 'text', class: 'field-in', spellcheck: 'false', autocomplete: 'off' });
+    input.value = value;
+    input.addEventListener('change', function () { onchange(input.value); });
+    return h('label', { class: 'field' }, label, input);
   }
 
   function hasAmount(ev, form, table, codes, item) {
@@ -3264,7 +4197,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
   function renderSchedule() {
     var r = state.result, ev = r.evaluator, form = state.spec.formByName[state.form];
     var view = clear($('schedule-view'));
-    var hideEmpty = $('schedule-filled').checked;
+    var hideEmpty = $('schedule-filled').checked && !canEdit(form);
     var hits = cellHits(form.n);
     var present = ev.present(form.n);
     view.appendChild(h('div', { class: 'sched-head' }, h('h2', null, form.n + ': ' + form.t),
@@ -3277,11 +4210,42 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     if (form.z && ev.instances(form.n).length > 1) {
       view.appendChild(h('p', { class: 'notice' }, 'This schedule has several book codes; only the first is shown.'));
     }
-    (form.f || []).forEach(function (fd) {
-      var d = ev.instances(form.n)[0];
-      var rec = d && d.data && d.data.fields[fd[0]];
-      view.appendChild(h('p', null, h('strong', null, fd[2] || fd[0]), ': ', rec ? String(rec.raw) : '(blank)'));
-    });
+    if (state.editing && !form.x) view.appendChild(h('p', { class: 'notice' }, 'Nothing here can be edited: the BSP builds this schedule from the others.'));
+    if (canEdit(form)) {
+      var hbox = h('div', { class: 'row edit-fields' });
+      if (state.doc.source === 'xml') {
+        state.spec.header.forEach(function (hd) {
+          var rec = state.doc.header[hd[0]];
+          hbox.appendChild(fieldEditor(form, 'Header / ' + hd[0], rec ? String(rec.raw) : '', function (v) {
+            EDIT.setHeader(state.spec, state.doc, hd[0], v);
+            recheck(false);
+          }));
+        });
+      } else {
+        hbox.appendChild(h('p', { class: 'muted' }, 'Bank code and period: set them under Reporting period at the top of the page.'));
+      }
+      view.appendChild(hbox);
+    }
+    var fieldList = (form.z ? [[form.z.f, form.z.ty, form.z.t]] : []).concat(form.f || []);
+    if (canEdit(form) && fieldList.length) {
+      var fbox = h('div', { class: 'row edit-fields' });
+      fieldList.forEach(function (fd) {
+        var inst = state.doc.forms[form.n] && state.doc.forms[form.n][0];
+        var rec = inst && inst.fields[fd[0]];
+        fbox.appendChild(fieldEditor(form, fd[2] || fd[0], rec ? String(rec.raw) : '', function (v) {
+          var was = !!state.doc.forms[form.n];
+          EDIT.setField(state.spec, state.doc, form.n, fd[0], v);
+          recheck(!was);
+        }));
+      });
+      view.appendChild(fbox);
+    } else {
+      (form.f || []).forEach(function (fd) {
+        var d = ev.instances(form.n)[0];
+        var rec = d && d.data && d.data.fields[fd[0]];
+        view.appendChild(h('p', null, h('strong', null, fd[2] || fd[0]), ': ', rec ? String(rec.raw) : '(blank)'));
+      });
+    }
 
     form.tb.forEach(function (table) {
       var wrap = h('div', { class: 'sched-table' });
@@ -3306,20 +4270,21 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
         table.cols.forEach(function (c) { head.appendChild(h('th', null, h('span', { class: 'code' }, c[0]), c[1])); });
         for (var i = 0; i < n; i++) {
           total++; shown++;
-          var tr2 = h('tr', null, h('th', null, String(i + 1)));
+          var tr2 = h('tr', null, h('th', null, String(i + 1), canEdit(form, table) ? removeButton(form, table, i) : null));
           for (var j = 0; j < table.cols.length; j++) tr2.appendChild(valueCell(ev, form, table, table.cols[j][0], i, hits));
           body.appendChild(tr2);
         }
       } else {
         var m = ev.itemCount(form.n, table.n);
         head.appendChild(h('th', { class: 'rowhead' }, 'Row'));
-        for (var e = 0; e < m; e++) head.appendChild(h('th', null, 'Entry ' + (e + 1)));
+        for (var e = 0; e < m; e++) head.appendChild(h('th', null, 'Entry ' + (e + 1), canEdit(form, table) ? removeButton(form, table, e) : null));
         Object.keys(table.c).forEach(function (code) {
           total++;
           var label = table.rowLabel[code] || table.rowLabel[code.slice(0, 5)];
           var any = false;
           for (var x = 0; x < m; x++) any = any || hasAmount(ev, form, table, [code], x);
           if (hideEmpty && !any) return;
+          if (!m && canEdit(form, table)) return;
           shown++;
           var tr3 = h('tr', null, h('th', null, h('span', { class: 'code' }, code), label ? label[1] : ''));
           for (var y = 0; y < m; y++) tr3.appendChild(valueCell(ev, form, table, code, y, hits));
@@ -3327,15 +4292,17 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
         });
       }
       if (!shown) {
-        wrap.appendChild(h('p', { class: 'muted' }, total ? 'No amounts in this table.' : 'No entries.'));
+        wrap.appendChild(h('p', { class: 'muted' }, total && table.k === 'S' ? 'No amounts in this table.' : 'No entries.'));
       } else {
         tbl.appendChild(h('thead', null, head));
         tbl.appendChild(body);
         wrap.appendChild(h('div', { class: 'table-scroll' }, tbl));
         if (shown < total) wrap.appendChild(h('p', { class: 'muted' }, 'Showing ' + shown + ' of ' + total + ' rows.'));
       }
+      if (table.k !== 'S') listButtons(form, table, wrap, ev.itemCount(form.n, table.n));
       view.appendChild(wrap);
     });
+    editStatus();
   }
 
   // ---- "what is checked" -----------------------------------------------------
@@ -3421,6 +4388,8 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     });
     $('report').addEventListener('change', function () {
       state.input = null;
+      state.doc = null;
+      state.saved = 0;
       state.result = null;
       $('results').hidden = true;
       $('empty').hidden = false;
@@ -3442,6 +4411,14 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     $('history-clear').addEventListener('click', function () { state.history = {}; renderHistory(); run(); });
     $('schedule-pick').addEventListener('change', function () { state.form = this.value; renderSchedule(); });
     $('schedule-filled').addEventListener('change', renderSchedule);
+    $('schedule-edit').addEventListener('change', function () { state.editing = this.checked; renderSchedule(); });
+    $('edit-xlsx').addEventListener('click', function () { exportXlsx($('edit-note')); });
+    $('edit-xml').addEventListener('click', function () { exportXml($('edit-note')); });
+    window.addEventListener('beforeunload', function (e) {
+      if (!unsaved()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
     $('rule-search').addEventListener('input', searchRules);
     tabs();
   }
@@ -3449,7 +4426,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
   init().catch(function (e) { fail(e && e.message ? e.message : String(e)); });
 
   // For the test page and for debugging in the console.
-  B.app = { state: state, run: run, chooseFile: chooseFile, useReport: useReport, h: h, clear: clear };
+  B.app = { state: state, run: run, chooseFile: chooseFile, useReport: useReport, recheck: recheck, h: h, clear: clear };
 })();
 </script>
 <script>
@@ -3558,7 +4535,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     var certP = h('p', { class: 'muted' }, 'Checking the certificate...');
     card.appendChild(certP);
 
-    var isXml = doc.source === 'xml' && !input.inner && !doc.fatal;
+    var isXml = doc.source === 'xml' && !input.inner && !doc.fatal && !doc.edited;
     var u = doc.header.Undertaking;
     var fReport = h('input', { type: 'text', value: ctx.spec.report, spellcheck: 'false' });
     var fBank = h('input', { type: 'text', value: u && !u.bad ? u.v : '', spellcheck: 'false' });
@@ -3569,7 +4546,9 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
 
     if (!isXml) {
       card.appendChild(h('p', { class: 'notice' }, doc.fatal ? 'This file cannot be read, so it cannot be sent.'
-        : 'The BSP API takes the XML file. Open the .xml itself here (not the workbook or a zip) to send it.'));
+        : doc.edited ? 'Values were changed on this page, so the file opened is no longer what would be sent. Press "Export to XML" above; the new file opens here, ready to send.'
+        : doc.source === 'xlsx' ? 'The BSP API takes the XML file. Press "Export to XML" above; it opens here, ready to send.'
+          : 'The BSP API takes the XML file. Open the .xml itself here (not a zip) to send it.'));
     } else {
       card.appendChild(h('div', { class: 'row' },
         h('label', { class: 'field' }, 'Report code', fReport),

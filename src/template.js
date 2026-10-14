@@ -191,6 +191,17 @@
       }
     });
 
+    // schedules the Header sheet of a workbook exported from here lists as sent with no data
+    var nil = {};
+    book.sheets.forEach(function (sheet) {
+      if (sheet.name.trim().toLowerCase() !== 'header') return;
+      Object.keys(sheet.rows).forEach(function (rn) {
+        var a = sheet.rows[rn][1], b = sheet.rows[rn][2];
+        if (typeof a !== 'string' || a.trim().toLowerCase() !== 'filed empty' || typeof b !== 'string') return;
+        b.split(/[\s,;]+/).forEach(function (n) { if (spec.formByName[n]) nil[n] = true; });
+      });
+    });
+
     var matched = 0, strange = [];
     book.sheets.forEach(function (sheet) {
       var form = spec.formByName[sheet.name.trim()];
@@ -254,9 +265,9 @@
         var cols = Object.keys(colCodes).map(Number).sort(function (a, b) { return a - b; });
         var body = inSection.filter(function (rn) { return rn > codeRow; });
 
-        function rowCodeOf(r, pattern) {
+        function rowCodeOf(r, pattern, known) {
           for (var c = 2; c <= 6; c++) {
-            if (typeof r[c] === 'string' && pattern.test(r[c].trim()) && !colCodes[c]) return { code: r[c].trim(), col: c };
+            if (typeof r[c] === 'string' && pattern.test(r[c].trim()) && !colCodes[c] && (!known || known[r[c].trim()])) return { code: r[c].trim(), col: c };
           }
           return null;
         }
@@ -318,7 +329,10 @@
           // one entry per column (or per group of coded columns), rows carry the codes
           var coded = [];
           inSection.forEach(function (rn) {
-            var rc = rowCodeOf(rows[rn], /^[A-Z][A-Z0-9_]*$/);
+            // only a code of this list counts, so a label such as TOTAL is not taken for one
+            var known = {};
+            Object.keys(table.c).forEach(function (k) { known[k] = true; known[k.slice(0, 5)] = true; });
+            var rc = rowCodeOf(rows[rn], /^[A-Z][A-Z0-9_]*$/, known);
             if (rc && rn !== codeRow) coded.push({ row: rn, code: rc.code, col: rc.col });
           });
           if (!coded.length) return;
@@ -352,13 +366,14 @@
       });
 
       // A schedule the schema requires is part of every file, so its sheet is
-      // read as filed even when it is nil; so are its required tables.
-      if (form.r) {
+      // read as filed even when it is nil; so are its required tables. The same
+      // goes for a schedule listed under "Filed empty" in the Header sheet.
+      if (form.r || nil[form.n]) {
         form.tb.forEach(function (t) {
           if (t.r && !inst.tables[t.n]) inst.tables[t.n] = t.k === 'S' ? { cells: {} } : { items: [] };
         });
       }
-      if (filled || form.r) doc.forms[form.n] = [inst];
+      if (filled || form.r || nil[form.n]) doc.forms[form.n] = [inst];
     });
 
     if (!matched) {
@@ -382,5 +397,25 @@
     return readWorkbook(bytes).then(function (book) { return readTemplate(book, spec, header); });
   }
 
-  return { read: read, readWorkbook: readWorkbook, readTemplate: readTemplate, unzip: unzip, colName: colName, toRaw: toRaw };
+  // The bank code and period kept in a sheet named Header (column A the field,
+  // column B its value), as the workbooks this tool writes have. The BSP's own
+  // template has no such sheet; then this returns {}.
+  function readHeader(book, spec) {
+    var out = {};
+    var sheet = book.sheets.filter(function (s) { return s.name.trim().toLowerCase() === 'header'; })[0];
+    if (!sheet) return out;
+    var names = {};
+    spec.header.forEach(function (h) { names[h[0].toLowerCase()] = h; });
+    Object.keys(sheet.rows).forEach(function (rn) {
+      var row = sheet.rows[rn], a = row[1], b = row[2];
+      if (typeof a !== 'string' || b === undefined || b === null || typeof b === 'object') return;
+      var h = names[a.trim().toLowerCase()];
+      if (!h) return;
+      var type = spec.types[h[1]];
+      out[h[0]] = typeof b === 'number' && type.b === 'D' ? isoFromSerial(b) : String(b).trim();
+    });
+    return out;
+  }
+
+  return { read: read, readWorkbook: readWorkbook, readTemplate: readTemplate, readHeader: readHeader, unzip: unzip, colName: colName, toRaw: toRaw };
 });

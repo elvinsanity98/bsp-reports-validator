@@ -1,7 +1,7 @@
 // Page behaviour: reads the chosen file, runs the engine, shows the result.
 (function () {
   'use strict';
-  var B = self.BSPV, ENGINE = B.engine, TEMPLATE = B.template, SPEC = B.spec;
+  var B = self.BSPV, ENGINE = B.engine, TEMPLATE = B.template, SPEC = B.spec, EDIT = B.edit, EXPORT = B.exporter;
   var fmt = ENGINE.fmt;
 
   function $(id) { return document.getElementById(id); }
@@ -32,7 +32,10 @@
   var state = {
     spec: null,         // the report definition in use
     header: {},         // report -> values typed into the reporting period fields
-    input: null,        // { name, bytes }
+    input: null,        // { name, bytes, fresh }
+    doc: null,          // the file as read, with the changes made in the Schedules tab
+    saved: 0,           // doc.edited when it was last exported
+    editing: false,
     result: null,
     history: {},        // 'YYYY-MM' -> { doc, name }
     sev: { error: true, warning: true, info: true },
@@ -226,6 +229,8 @@
       var book = await TEMPLATE.readWorkbook(input.bytes);
       found = SPEC.detectSheets(book.sheets.map(function (sh) { return sh.name; }));
       if (found && found !== state.spec.report) await useReport(found);
+      // a workbook exported from here carries its bank code and period in a Header sheet
+      if (input.fresh) applyHeader(TEMPLATE.readHeader(book, state.spec));
       return TEMPLATE.readTemplate(book, state.spec, headerValues());
     }
     if (kind === 'zip') {
@@ -243,24 +248,59 @@
     return ENGINE.readXmlBytes(input.bytes, state.spec);
   }
 
+  // Sets the reporting period fields to the values a file carries.
+  function applyHeader(values) {
+    var keep = state.header[state.spec.report] = state.header[state.spec.report] || {};
+    Object.keys(values).forEach(function (k) {
+      var el = $('h-' + k), v = String(values[k]);
+      if (!el) return;
+      if (el.tagName === 'SELECT' && /^\d+$/.test(v)) v = String(Number(v));
+      el.value = v;
+      keep[k] = el.value;
+    });
+  }
+
+  // A template takes its bank code and period from the fields above; after
+  // changes were made here they are copied in, instead of reading it again.
+  function syncHeader(doc) {
+    var hv = headerValues();
+    state.spec.header.forEach(function (hd) {
+      var cur = doc.header[hd[0]], want = hv[hd[0]] || '';
+      if (cur ? String(cur.raw) === want : want === '') return;
+      EDIT.setHeader(state.spec, doc, hd[0], want);
+    });
+  }
+
+  function checkDoc() {
+    var hist = {};
+    Object.keys(state.history).forEach(function (k) { hist[k] = state.history[k].doc; });
+    var p = profile();
+    state.result = ENGINE.check(state.spec, state.doc, { profile: p, history: hist });
+    state.result.profile = p;
+  }
+
   async function run() {
     if (!state.input || !state.spec) return;
     fail('');
+    // an unchanged template is read again, with the period fields as they are now
+    if (state.doc && state.doc.source === 'xlsx' && !state.doc.edited) state.doc = null;
     busy('Checking ' + state.input.name + '...');
     await tick();
     try {
-      var doc = await toDoc(state.input);
-      var hist = {};
-      Object.keys(state.history).forEach(function (k) { hist[k] = state.history[k].doc; });
-      var p = profile();
-      state.result = ENGINE.check(state.spec, doc, { profile: p, history: hist });
-      state.result.profile = p;
+      if (!state.doc) {
+        state.doc = await toDoc(state.input);
+        state.input.fresh = false;
+      } else if (state.doc.source === 'xlsx' && !state.doc.fatal) {
+        syncHeader(state.doc);
+      }
+      checkDoc();
       state.open = {};
       state.shown = {};
       render();
       saveSetup();
     } catch (e) {
       state.result = null;
+      state.doc = null;
       $('results').hidden = true;
       $('empty').hidden = false;
       fail(e && e.message ? e.message : String(e));
@@ -268,10 +308,30 @@
     busy('');
   }
 
+  function unsaved() { return !!(state.doc && (state.doc.edited || 0) > state.saved); }
+
   async function chooseFile(file) {
     if (!file) return;
-    state.input = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+    if (unsaved() && !window.confirm('The changes made on this page to ' + state.input.name + ' have not been exported. Open ' + file.name + ' anyway and lose them?')) return;
+    state.input = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), fresh: true };
+    state.doc = null;
+    state.saved = 0;
     run();
+  }
+
+  // After a change in the Schedules tab: the rules run again on the changed file.
+  var recheckTimer = null;
+  function recheck(rebuild) {
+    clearTimeout(recheckTimer);
+    var go = function () {
+      try {
+        checkDoc();
+        render({ keepSchedule: !rebuild });
+      } catch (e) {
+        fail(e && e.message ? e.message : String(e));
+      }
+    };
+    if (rebuild) go(); else recheckTimer = setTimeout(go, 120);
   }
 
   async function addHistory(files) {
@@ -359,7 +419,8 @@
     other: 'could not be worked out (for example a ratio with a zero base)'
   };
 
-  function render() {
+  function render(opts) {
+    opts = opts || {};
     var r = state.result, doc = r.doc, st = r.stats, c = r.counts;
     $('empty').hidden = true;
     var box = clear($('results'));
@@ -381,7 +442,8 @@
     }
     box.appendChild(h('div', { class: 'verdict ' + r.verdict },
       h('span', { class: 'glyph', 'aria-hidden': 'true' }, r.verdict === 'ok' ? 'OK' : '!'),
-      h('div', null, h('h2', null, title), h('p', null, state.input.name + (state.input.inner ? ' > ' + state.input.inner : '') + '. ' + sub))));
+      h('div', null, h('h2', null, title), h('p', null, state.input.name + (state.input.inner ? ' > ' + state.input.inner : '') +
+        (doc.edited ? ', with ' + doc.edited + (doc.edited === 1 ? ' change' : ' changes') + ' made on this page' : '') + '. ' + sub))));
 
     if (st.skippedTotal) {
       var parts = Object.keys(st.skipped).map(function (k) { return st.skipped[k].toLocaleString('en-US') + ' ' + SKIP_WORDS[k]; });
@@ -423,10 +485,11 @@
         ['Not checked', st.skippedTotal]
       ]), h('p', { class: 'card-foot' }, 'Checked as: ' + profileSummary() + '.'))));
 
+    if (!doc.fatal && EXPORT) box.appendChild(exportCard());
     if (B.send) B.send.render(box, { input: state.input, result: r, spec: state.spec });
 
     if (!r.findings.length) {
-      renderSchedules();
+      if (opts.keepSchedule) refreshSchedule(); else renderSchedules();
       return;
     }
 
@@ -465,7 +528,7 @@
     box.appendChild(tools);
     box.appendChild(h('div', { class: 'groups', id: 'groups' }));
     renderGroups();
-    renderSchedules();
+    if (opts.keepSchedule) refreshSchedule(); else renderSchedules();
   }
 
   function renderGroups() {
@@ -579,6 +642,76 @@
     return body;
   }
 
+  // ---- export --------------------------------------------------------------
+
+  function download(data, name, type) {
+    var a = h('a', { href: URL.createObjectURL(new Blob([data], { type: type })), download: name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  // The file as an Excel workbook in the layout of the BSP input template, with
+  // a Header sheet for the bank code and period, to be edited in Excel and
+  // opened here again.
+  async function exportXlsx(note) {
+    clear(note).appendChild(h('p', { class: 'muted' }, 'Writing the workbook...'));
+    try {
+      var out = await EXPORT.toXlsx(state.spec, state.doc);
+      clear(note);
+      if (!out.bytes) { note.appendChild(h('p', { class: 'fail' }, out.notes.join(' '))); return; }
+      download(out.bytes, out.name, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      state.saved = state.doc.edited || 0;
+      editStatus();
+      note.appendChild(h('p', null, 'Saved ' + out.name + ' to your Downloads folder.'));
+      note.appendChild(h('p', { class: 'muted' }, 'Edit it in Excel: type in the white cells only; grey cells are totals the BSP works out, and list sheets have ' +
+        'blank rows (or columns) for new entries. The Header sheet keeps the bank code and period. Save it, then drop it here again to check it and export the XML.'));
+      out.notes.forEach(function (n) { note.appendChild(h('p', { class: 'muted' }, n)); });
+    } catch (e) {
+      clear(note).appendChild(h('p', { class: 'fail' }, 'The workbook could not be written: ' + (e && e.message ? e.message : e)));
+    }
+  }
+
+  // The XML submission file. On the page served by `node submit.js ui` the new
+  // file is opened right away, ready to send.
+  function exportXml(note) {
+    var out = EXPORT.toXml(state.spec, state.doc);
+    clear(note);
+    if (out.problems.length) {
+      note.appendChild(h('p', { class: 'fail' }, 'No XML written. Fix these first: ' + out.problems.join(' ')));
+      return;
+    }
+    download(out.xml, out.name, 'application/xml');
+    state.saved = state.doc.edited || 0;
+    editStatus();
+    note.appendChild(h('p', null, 'Saved ' + out.name + ' to your Downloads folder.' + (out.rounded.length ? ' Rounded: ' +
+      out.rounded.map(function (x) { return x.where + ' ' + x.from + ' to ' + x.to; }).join('; ') + '.' : '')));
+    if (self.BSPV_LOCAL) {
+      note.appendChild(h('p', { class: 'muted' }, 'Opening the XML here so it can be checked and sent...'));
+      setTimeout(function () { chooseFile(new File([out.xml], out.name, { type: 'application/xml' })); }, 400);
+    } else {
+      note.appendChild(h('p', { class: 'muted' }, 'Open that file here to check it before sending.'));
+    }
+  }
+
+  function exportCard() {
+    var doc = state.doc;
+    var card = h('div', { class: 'card sendcard' }, h('h3', null, 'Export'));
+    var note = h('div', { class: 'send-log' });
+    var what = doc.source === 'xlsx' ? 'this workbook' : 'this XML file';
+    card.appendChild(h('p', { class: 'muted' },
+      'Export to Excel writes ' + what + ' as a workbook laid out like the BSP input template, to edit in Excel instead of on the portal. ' +
+      'Export to XML writes the submission file for the BSP' + (doc.source === 'xlsx' ? ', with the bank code and period entered above' : '') + '. ' +
+      'Values can also be changed on this page: Schedules tab, Edit values.' +
+      (doc.edited ? ' Both include the ' + doc.edited + (doc.edited === 1 ? ' change' : ' changes') + ' made here' + (unsaved() ? ', not exported yet.' : '.') : '')));
+    card.appendChild(h('div', { class: 'row' },
+      h('button', { class: 'btn', type: 'button', onclick: function () { exportXlsx(note); } }, 'Export to Excel'),
+      h('button', { class: 'btn primary', type: 'button', onclick: function () { exportXml(note); } }, 'Export to XML')));
+    card.appendChild(note);
+    return card;
+  }
+
   function exportCsv() {
     var rows = [['Severity', 'Code', 'Schedule', 'Table', 'Cell', 'Entry', 'Where', 'Message', 'Left', 'Operator', 'Right', 'Difference', 'Tolerance', 'Left formula', 'Right formula']];
     state.result.findings.forEach(function (f) {
@@ -609,10 +742,16 @@
     $('schedules-empty').hidden = !!ok;
     $('schedules').hidden = !ok;
     if (!ok) return;
-    var counts = {};
+    var first = fillPick();
+    if (!state.form || !state.spec.formByName[state.form]) state.form = first || state.spec.forms[0].n;
+    $('schedule-pick').value = state.form;
+    renderSchedule();
+  }
+
+  function fillPick() {
+    var r = state.result, counts = {}, first = null;
     r.findings.forEach(function (f) { if (f.form) counts[f.form] = (counts[f.form] || 0) + 1; });
     var pick = clear($('schedule-pick'));
-    var first = null;
     state.spec.forms.forEach(function (f) {
       var present = r.evaluator.present(f.n);
       if (present && !first) first = f.n;
@@ -620,9 +759,69 @@
         (counts[f.n] ? ', ' + counts[f.n] + ' findings' : '');
       pick.appendChild(h('option', { value: f.n }, f.n + '  -  ' + f.t.slice(0, 70) + '  (' + note + ')'));
     });
-    if (!state.form || !state.spec.formByName[state.form]) state.form = first || state.spec.forms[0].n;
     pick.value = state.form;
-    renderSchedule();
+    return first;
+  }
+
+  // After an edit: totals, findings and markings brought up to date in place,
+  // so the cell being typed in keeps its focus.
+  function refreshSchedule() {
+    var r = state.result;
+    if (!r || !r.evaluator || $('schedules').hidden) { renderSchedules(); return; }
+    fillPick();
+    var form = state.spec.formByName[state.form], hits = cellHits(form.n);
+    Array.prototype.forEach.call($('schedule-view').querySelectorAll('td[data-c]'), function (td) {
+      var i = td.getAttribute('data-i');
+      paintCell(td, r.evaluator, form, form.tableByName[td.getAttribute('data-t')], td.getAttribute('data-c'), i === '' ? undefined : Number(i), hits);
+    });
+    editStatus();
+  }
+
+  function editStatus() {
+    var doc = state.doc, n = doc ? doc.edited || 0 : 0;
+    $('editbar').hidden = !(state.editing || n);
+    $('edit-status').textContent = !n ? 'No changes yet. Type over a value and press Enter or Tab; the rules run again by themselves.'
+      : n + (n === 1 ? ' change' : ' changes') + ' made on this page' + (unsaved() ? ', not exported yet. Export to keep them.' : ', exported.');
+  }
+
+  // The record of one reported cell in the document, or undefined.
+  function recordOf(form, table, code, item) {
+    var inst = state.doc && state.doc.forms[form.n] && state.doc.forms[form.n][0];
+    var data = inst && inst.tables[table.n];
+    if (!data) return undefined;
+    if (table.k === 'S') return data.cells[code];
+    var it = data.items[item];
+    return it && it.cells[code];
+  }
+
+  function canEdit(form, table) { return state.editing && form.x && (!table || table.x) && !state.doc.fatal; }
+
+  // A number is shown with thousands separators; a value that is not valid, as typed.
+  function inputText(rec) {
+    if (!rec) return '';
+    return !rec.bad && typeof rec.v === 'number' ? fmt(rec.v) : String(rec.raw);
+  }
+
+  function editCell(form, table, code, item, input) {
+    var wasPresent = !!state.doc.forms[form.n];
+    try {
+      EDIT.setValue(state.spec, state.doc, { form: form.n, table: table.n, cell: code, item: item }, input.value);
+    } catch (e) {
+      fail(e.message);
+      return;
+    }
+    input.value = inputText(recordOf(form, table, code, item));
+    recheck(!wasPresent);
+  }
+
+  // Enter moves down a column, as in Excel.
+  function nextDown(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    var td = e.target.parentNode, tr = td.parentNode, idx = Array.prototype.indexOf.call(tr.children, td);
+    var next = tr.nextElementSibling;
+    while (next && !(next.children[idx] && next.children[idx].querySelector('input'))) next = next.nextElementSibling;
+    if (next) { var inp = next.children[idx].querySelector('input'); inp.focus(); inp.select(); } else e.target.blur();
   }
 
   function cellHits(formName) {
@@ -644,15 +843,72 @@
   function valueCell(ev, form, table, code, item, hits) {
     var def = table.c[code];
     if (!def) return h('td', { class: 'none', title: 'Not a cell of this table' });
+    var td = h('td', { 'data-t': table.n, 'data-c': code, 'data-i': item === undefined ? '' : String(item) });
+    if (def[0] === 0 && canEdit(form, table)) {
+      var rec = recordOf(form, table, code, item);
+      var input = h('input', {
+        type: 'text', class: 'cell-in', spellcheck: 'false', autocomplete: 'off',
+        'aria-label': form.n + ' ' + table.n + ' ' + code + (item === undefined ? '' : ' entry ' + (item + 1))
+      });
+      input.value = inputText(rec);
+      input.addEventListener('change', function () { editCell(form, table, code, item, input); });
+      input.addEventListener('keydown', nextDown);
+      td.appendChild(input);
+    }
+    paintCell(td, ev, form, table, code, item, hits);
+    return td;
+  }
+
+  function paintCell(td, ev, form, table, code, item, hits) {
+    var def = table.c[code];
     var v = ev.valueOf(form.n, table.n, code, item);
     var cls = def[0] === 0 ? '' : 'calc';
     var title = def[0] === 1 ? 'BSP total = ' + def[1] : def[0] === 2 ? 'Fixed by the BSP' : code;
     var hit = hits[table.n + '|' + code + '|' + (item === undefined ? '' : item)];
     if (hit) cls += ' hit-' + hit;
-    if (ENGINE.isUnknown(v)) return h('td', { class: cls + ' unknown', title: 'Not known: ' + v.why }, '?');
-    if (typeof v === 'string') return h('td', { class: cls + ' txt', title: title }, v);
-    if (v === null) return h('td', { class: cls, title: title }, '');
-    return h('td', { class: cls + (v === 0 ? ' zero' : ''), title: title }, fmt(v));
+    var input = td.firstChild && td.firstChild.tagName === 'INPUT' ? td.firstChild : null;
+    if (input) {
+      var rec = recordOf(form, table, code, item);
+      var type = ENGINE.isUnknown(v) || typeof v !== 'string' ? '' : ' txt';
+      td.className = cls + ' edit' + type + (rec && rec.bad ? ' bad' : '');
+      td.title = rec && rec.bad ? 'Not in the right format; see the findings' : code;
+      return;
+    }
+    clear(td);
+    if (ENGINE.isUnknown(v)) { td.className = cls + ' unknown'; td.title = 'Not known: ' + v.why; td.textContent = '?'; return; }
+    td.title = title;
+    if (typeof v === 'string') { td.className = cls + ' txt'; td.textContent = v; return; }
+    if (v === null) { td.className = cls; return; }
+    td.className = cls + (v === 0 ? ' zero' : '');
+    td.textContent = fmt(v);
+  }
+
+  function listButtons(form, table, wrap, count) {
+    if (!canEdit(form, table)) return;
+    wrap.appendChild(h('div', { class: 'row list-tools' },
+      h('button', {
+        class: 'btn small', type: 'button',
+        onclick: function () { EDIT.addItem(state.spec, state.doc, form.n, table.n); recheck(true); }
+      }, 'Add entry'),
+      h('span', { class: 'muted' }, count + (count === 1 ? ' entry' : ' entries') + '. An entry with no values is left out of the exported file.')));
+  }
+
+  function removeButton(form, table, i) {
+    return h('button', {
+      class: 'xbtn', type: 'button', title: 'Remove entry ' + (i + 1), 'aria-label': 'Remove entry ' + (i + 1) + ' of ' + table.n,
+      onclick: function () {
+        if (!window.confirm('Remove entry ' + (i + 1) + ' of ' + form.n + ' / ' + table.n + '?')) return;
+        EDIT.removeItem(state.spec, state.doc, form.n, table.n, i);
+        recheck(true);
+      }
+    }, 'x');
+  }
+
+  function fieldEditor(form, label, value, onchange) {
+    var input = h('input', { type: 'text', class: 'field-in', spellcheck: 'false', autocomplete: 'off' });
+    input.value = value;
+    input.addEventListener('change', function () { onchange(input.value); });
+    return h('label', { class: 'field' }, label, input);
   }
 
   function hasAmount(ev, form, table, codes, item) {
@@ -666,7 +922,7 @@
   function renderSchedule() {
     var r = state.result, ev = r.evaluator, form = state.spec.formByName[state.form];
     var view = clear($('schedule-view'));
-    var hideEmpty = $('schedule-filled').checked;
+    var hideEmpty = $('schedule-filled').checked && !canEdit(form);
     var hits = cellHits(form.n);
     var present = ev.present(form.n);
     view.appendChild(h('div', { class: 'sched-head' }, h('h2', null, form.n + ': ' + form.t),
@@ -679,11 +935,42 @@
     if (form.z && ev.instances(form.n).length > 1) {
       view.appendChild(h('p', { class: 'notice' }, 'This schedule has several book codes; only the first is shown.'));
     }
-    (form.f || []).forEach(function (fd) {
-      var d = ev.instances(form.n)[0];
-      var rec = d && d.data && d.data.fields[fd[0]];
-      view.appendChild(h('p', null, h('strong', null, fd[2] || fd[0]), ': ', rec ? String(rec.raw) : '(blank)'));
-    });
+    if (state.editing && !form.x) view.appendChild(h('p', { class: 'notice' }, 'Nothing here can be edited: the BSP builds this schedule from the others.'));
+    if (canEdit(form)) {
+      var hbox = h('div', { class: 'row edit-fields' });
+      if (state.doc.source === 'xml') {
+        state.spec.header.forEach(function (hd) {
+          var rec = state.doc.header[hd[0]];
+          hbox.appendChild(fieldEditor(form, 'Header / ' + hd[0], rec ? String(rec.raw) : '', function (v) {
+            EDIT.setHeader(state.spec, state.doc, hd[0], v);
+            recheck(false);
+          }));
+        });
+      } else {
+        hbox.appendChild(h('p', { class: 'muted' }, 'Bank code and period: set them under Reporting period at the top of the page.'));
+      }
+      view.appendChild(hbox);
+    }
+    var fieldList = (form.z ? [[form.z.f, form.z.ty, form.z.t]] : []).concat(form.f || []);
+    if (canEdit(form) && fieldList.length) {
+      var fbox = h('div', { class: 'row edit-fields' });
+      fieldList.forEach(function (fd) {
+        var inst = state.doc.forms[form.n] && state.doc.forms[form.n][0];
+        var rec = inst && inst.fields[fd[0]];
+        fbox.appendChild(fieldEditor(form, fd[2] || fd[0], rec ? String(rec.raw) : '', function (v) {
+          var was = !!state.doc.forms[form.n];
+          EDIT.setField(state.spec, state.doc, form.n, fd[0], v);
+          recheck(!was);
+        }));
+      });
+      view.appendChild(fbox);
+    } else {
+      (form.f || []).forEach(function (fd) {
+        var d = ev.instances(form.n)[0];
+        var rec = d && d.data && d.data.fields[fd[0]];
+        view.appendChild(h('p', null, h('strong', null, fd[2] || fd[0]), ': ', rec ? String(rec.raw) : '(blank)'));
+      });
+    }
 
     form.tb.forEach(function (table) {
       var wrap = h('div', { class: 'sched-table' });
@@ -708,20 +995,21 @@
         table.cols.forEach(function (c) { head.appendChild(h('th', null, h('span', { class: 'code' }, c[0]), c[1])); });
         for (var i = 0; i < n; i++) {
           total++; shown++;
-          var tr2 = h('tr', null, h('th', null, String(i + 1)));
+          var tr2 = h('tr', null, h('th', null, String(i + 1), canEdit(form, table) ? removeButton(form, table, i) : null));
           for (var j = 0; j < table.cols.length; j++) tr2.appendChild(valueCell(ev, form, table, table.cols[j][0], i, hits));
           body.appendChild(tr2);
         }
       } else {
         var m = ev.itemCount(form.n, table.n);
         head.appendChild(h('th', { class: 'rowhead' }, 'Row'));
-        for (var e = 0; e < m; e++) head.appendChild(h('th', null, 'Entry ' + (e + 1)));
+        for (var e = 0; e < m; e++) head.appendChild(h('th', null, 'Entry ' + (e + 1), canEdit(form, table) ? removeButton(form, table, e) : null));
         Object.keys(table.c).forEach(function (code) {
           total++;
           var label = table.rowLabel[code] || table.rowLabel[code.slice(0, 5)];
           var any = false;
           for (var x = 0; x < m; x++) any = any || hasAmount(ev, form, table, [code], x);
           if (hideEmpty && !any) return;
+          if (!m && canEdit(form, table)) return;
           shown++;
           var tr3 = h('tr', null, h('th', null, h('span', { class: 'code' }, code), label ? label[1] : ''));
           for (var y = 0; y < m; y++) tr3.appendChild(valueCell(ev, form, table, code, y, hits));
@@ -729,15 +1017,17 @@
         });
       }
       if (!shown) {
-        wrap.appendChild(h('p', { class: 'muted' }, total ? 'No amounts in this table.' : 'No entries.'));
+        wrap.appendChild(h('p', { class: 'muted' }, total && table.k === 'S' ? 'No amounts in this table.' : 'No entries.'));
       } else {
         tbl.appendChild(h('thead', null, head));
         tbl.appendChild(body);
         wrap.appendChild(h('div', { class: 'table-scroll' }, tbl));
         if (shown < total) wrap.appendChild(h('p', { class: 'muted' }, 'Showing ' + shown + ' of ' + total + ' rows.'));
       }
+      if (table.k !== 'S') listButtons(form, table, wrap, ev.itemCount(form.n, table.n));
       view.appendChild(wrap);
     });
+    editStatus();
   }
 
   // ---- "what is checked" -----------------------------------------------------
@@ -823,6 +1113,8 @@
     });
     $('report').addEventListener('change', function () {
       state.input = null;
+      state.doc = null;
+      state.saved = 0;
       state.result = null;
       $('results').hidden = true;
       $('empty').hidden = false;
@@ -844,6 +1136,14 @@
     $('history-clear').addEventListener('click', function () { state.history = {}; renderHistory(); run(); });
     $('schedule-pick').addEventListener('change', function () { state.form = this.value; renderSchedule(); });
     $('schedule-filled').addEventListener('change', renderSchedule);
+    $('schedule-edit').addEventListener('change', function () { state.editing = this.checked; renderSchedule(); });
+    $('edit-xlsx').addEventListener('click', function () { exportXlsx($('edit-note')); });
+    $('edit-xml').addEventListener('click', function () { exportXml($('edit-note')); });
+    window.addEventListener('beforeunload', function (e) {
+      if (!unsaved()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
     $('rule-search').addEventListener('input', searchRules);
     tabs();
   }
@@ -851,5 +1151,5 @@
   init().catch(function (e) { fail(e && e.message ? e.message : String(e)); });
 
   // For the test page and for debugging in the console.
-  B.app = { state: state, run: run, chooseFile: chooseFile, useReport: useReport, h: h, clear: clear };
+  B.app = { state: state, run: run, chooseFile: chooseFile, useReport: useReport, recheck: recheck, h: h, clear: clear };
 })();

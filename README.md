@@ -22,7 +22,7 @@ The tool recognises which report a file is, from the root element of the XML or 
 | --- | --- |
 | `.xml` | The submission file that follows the report's XSD. Findings point at the line in the file. |
 | `.zip` | A zip that holds exactly one such `.xml`. |
-| `.xlsx` | The BSP input template for the report, filled in. Findings point at the sheet and cell. The template has no place for the bank code and the reporting period, so enter them on the page. |
+| `.xlsx` | The BSP input template for the report, filled in. Findings point at the sheet and cell. The template has no place for the bank code and the reporting period, so enter them on the page. A workbook exported from this tool carries them in its Header sheet. |
 
 ## What it checks
 
@@ -87,6 +87,8 @@ node cli.js <file.xml | file.zip | template.xlsx> [options]
   --prior FILE             an earlier period's XML (repeatable)
   --csv FILE               write the findings to a CSV file
   --all                    list every finding
+  --save-xlsx              write the file as an Excel workbook next to it (see "Editing in Excel")
+  --save-xml               write the XML submission file next to it
 ```
 
 Exit code 0 = no errors, 1 = errors found, 2 = could not run.
@@ -99,6 +101,51 @@ node cli.js samples/with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml --bank RB
 ```
 
 `samples/README.txt` lists the sample files and the profile they assume. All figures in them are made up.
+
+## Editing in Excel, and exporting
+
+Every file opened here, XML or workbook, can be exported both ways with **Export to Excel** and **Export to XML** under the results.
+So a submission can be corrected in Excel instead of on the portal:
+
+1. Open the XML (for example the one the portal saved, or last period's) and press **Export to Excel**.
+2. Edit the workbook in Excel. It is laid out like the BSP input template, one sheet per schedule: type in the white cells only;
+   grey cells are totals the BSP works out. Lists have blank rows (or, for lists that run across, blank columns) for new entries.
+   The **Header** sheet keeps the bank code and period.
+3. Save it and open it here again. It is checked like any template, and the bank code and period come from its Header sheet.
+4. Press **Export to XML** for the file to send.
+
+Schedules sent with no data at all (`<BRIS_LDR/>`) are listed under "Filed empty" in the Header sheet; any other sheet left
+empty is read as a schedule not submitted. Values the template has no input cell for (totals the BSP works out, cells the schema
+does not know) are left out of the workbook, and the export says which.
+
+Small changes can be made on the page itself: **Schedules** tab, tick **Edit values**, and type over a value (Enter moves down,
+as in Excel; `1,234.50` is read as 1234.50). The rules run again after each change and the totals follow. List tables get
+**Add entry** and a remove button per entry; for an XML file the bank code and period can be changed there too. The changes
+stay on the page until exported, and the page warns before closing with changes not exported. On the page opened by
+`node submit.js ui`, a changed file cannot be sent until it is exported to XML; the new XML then opens by itself, ready to send.
+
+From the command line, `--save-xlsx` writes the workbook next to the file and `--save-xml` the XML:
+
+```
+node cli.js "WRR_RCB_4000000_2026-10-14_15-14-23.xml" --save-xlsx
+node cli.js "WRR_RCB_4000000_2026-10-14_16-02-11.xlsx" --save-xml
+```
+
+## Making the XML from the Excel template
+
+Open the filled-in input template, enter the bank code and period, and press **Export to XML**. The page saves the XML submission
+file, named like the portal's own (`WRR_RCB_<bank>_<date>_<time>.xml`). Opened through `node submit.js ui`, it then opens that XML
+straight away, so it can be checked and sent. From the command line:
+
+```
+node cli.js "WRR_RCB_v1.0_input_template.xlsx" --code <bank code> --from 2026-10-02 --to 2026-10-08 --save-xml
+```
+
+- Only the white input cells are written; totals the BSP works out are left out, as the schema wants.
+- An amount that Excel stores with rounding noise (`98358232.8399999` for 98,358,232.84) is written rounded, and the rounding is listed.
+  A real extra decimal (`1234.567`) is not rounded: no file is written until it is fixed in the workbook.
+- The file written is checked again before you see it.
+- Tried on 12 past weeks of WRR_RCB: from each week's template the tool wrote the same cells and values as the XML the BSP accepted that week.
 
 ## Sending a file to the BSP
 

@@ -103,7 +103,7 @@
     var certP = h('p', { class: 'muted' }, 'Checking the certificate...');
     card.appendChild(certP);
 
-    var isXml = doc.source === 'xml' && !input.inner && !doc.fatal;
+    var isXml = doc.source === 'xml' && !input.inner && !doc.fatal && !doc.edited;
     var u = doc.header.Undertaking;
     var fReport = h('input', { type: 'text', value: ctx.spec.report, spellcheck: 'false' });
     var fBank = h('input', { type: 'text', value: u && !u.bad ? u.v : '', spellcheck: 'false' });
@@ -114,7 +114,9 @@
 
     if (!isXml) {
       card.appendChild(h('p', { class: 'notice' }, doc.fatal ? 'This file cannot be read, so it cannot be sent.'
-        : 'The BSP API takes the XML file. Open the .xml itself here (not the workbook or a zip) to send it.'));
+        : doc.edited ? 'Values were changed on this page, so the file opened is no longer what would be sent. Press "Export to XML" above; the new file opens here, ready to send.'
+        : doc.source === 'xlsx' ? 'The BSP API takes the XML file. Press "Export to XML" above; it opens here, ready to send.'
+          : 'The BSP API takes the XML file. Open the .xml itself here (not a zip) to send it.'));
     } else {
       card.appendChild(h('div', { class: 'row' },
         h('label', { class: 'field' }, 'Report code', fReport),
