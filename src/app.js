@@ -338,12 +338,12 @@
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
       var doc = ENGINE.readXmlBytes(new Uint8Array(await f.arrayBuffer()), state.spec);
-      var y = doc.header.Year && doc.header.Year.v, p = doc.header.Period && doc.header.Period.v;
-      if (doc.fatal || typeof y !== 'number' || typeof p !== 'number') {
+      var key = ENGINE.historyKey(state.spec, doc);
+      if (!key) {
         state.history['?' + f.name] = { name: f.name, bad: true };
         continue;
       }
-      state.history[y + '-' + ('0' + p).slice(-2)] = { doc: doc, name: f.name };
+      state.history[key] = { doc: doc, name: f.name };
     }
     renderHistory();
     run();
@@ -359,7 +359,7 @@
       var e = state.history[k];
       list.appendChild(e.bad
         ? h('li', { class: 'bad' }, e.name + ': could not be read as a ' + state.spec.report + ' XML file with a period in its header.')
-        : h('li', null, h('strong', null, MONTHS[Number(k.slice(5)) - 1] + ' ' + k.slice(0, 4)), ' from ' + e.name));
+        : h('li', null, h('strong', null, (state.spec.periodStyle === 'quarter' ? 'Quarter ' + Number(k.slice(5)) / 3 + ' of ' : MONTHS[Number(k.slice(5)) - 1] + ' ') + k.slice(0, 4)), ' from ' + e.name));
     });
   }
 
@@ -835,6 +835,8 @@
         f.lhs.concat(f.rhs).forEach(function (o) { if (o.form === formName && !o.calc) mark(o.table, o.cell, o.item, f.sev); });
       } else if (f.form === formName && f.cell) {
         mark(f.table || '', f.cell, f.item, f.sev);
+      } else if (f.form === formName && f.cells) {
+        f.cells.forEach(function (c) { mark(f.table || '', c, f.item, f.sev); });
       }
     });
     return hits;

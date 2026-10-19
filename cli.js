@@ -126,9 +126,9 @@ async function main() {
   const history = {};
   for (const prior of o.prior) {
     const d = (await readDoc(prior, o, spec.report)).doc;
-    const y = d.header.Year && d.header.Year.v, p = d.header.Period && d.header.Period.v;
-    if (d.fatal || typeof y !== 'number' || typeof p !== 'number') throw new Error('Cannot read the period of ' + prior);
-    history[y + '-' + ('0' + p).slice(-2)] = d;
+    const key = ENGINE.historyKey(spec, d);
+    if (!key) throw new Error('Cannot read the period of ' + prior);
+    history[key] = d;
   }
 
   const r = ENGINE.check(spec, doc, { profile, history });

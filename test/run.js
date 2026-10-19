@@ -13,7 +13,7 @@ const fx = require('./fixtures.js');
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
-let spec, wrr, afrd;
+let spec, wrr, afrd, sblaf;
 
 const codes = (r) => r.findings.map((f) => f.code);
 const has = (r, code) => codes(r).includes(code);
@@ -374,7 +374,9 @@ const checkWrr = (xml, bank) => ENGINE.check(wrr, ENGINE.readXml(xml, wrr), { pr
 const week = (row, amount) => ({ [row + 'C0020']: amount, [row + 'C0050']: amount, [row + 'C0060']: amount, [row + 'C0070']: amount, [row + 'C0080']: amount });
 
 test('reports: each file says which report it is', () => {
-  assert.deepStrictEqual(SPEC.list().map((r) => r.report + ':' + r.periodStyle), ['AFRD:quarter', 'FRP_S:month', 'WRR_RCB:range']);
+  assert.deepStrictEqual(SPEC.list().map((r) => r.report + ':' + r.periodStyle), ['AFRD:quarter', 'FRP_S:month', 'SBLAF:quarter', 'WRR_RCB:range']);
+  assert.strictEqual(SPEC.detectXmlText(sample('clean/SBLAF_RB0001_2026-1.xml')), 'SBLAF');
+  assert.strictEqual(SPEC.detectSheets(['SBLAF-Q', 'SBLAF-A']), 'SBLAF');
   assert.strictEqual(SPEC.detectXmlText(sample('clean/WRR_RCB_RB0001_2026-09-18.xml')), 'WRR_RCB');
   assert.strictEqual(SPEC.detectXmlText(sample('clean/FRP_S_RB0001_2026-02.xml')), 'FRP_S');
   assert.strictEqual(SPEC.detectXmlText(sample('with-errors/not-well-formed.xml')), 'FRP_S', 'works on a broken file too');
@@ -557,6 +559,72 @@ test('AFRD: the Excel template, nil sheets and a missing sheet', async () => {
   delete sheets.AFRD_C1;
   const short = TEMPLATE.readTemplate(await TEMPLATE.readWorkbook(fx.makeXlsx(sheets)), afrd, header);
   assert.ok(short.findings.some((f) => f.code === 'XSD-REQUIRED' && /no sheet named AFRD_C1/.test(f.msg)));
+});
+
+// ---- SBLAF ---------------------------------------------------------------------
+
+const checkSblaf = (doc, opts) => ENGINE.check(sblaf, doc, Object.assign({ profile: fx.RB }, opts));
+const sblafDoc = (name) => ENGINE.readXml(sample(name), sblaf);
+
+test('SBLAF: samples', () => {
+  let r = checkSblaf(sblafDoc('clean/SBLAF_RB0001_2026-1.xml'));
+  assert.deepStrictEqual(r.findings.map((f) => f.code + ' ' + f.msg), []);
+  assert.strictEqual(r.stats.passed, 74);
+  r = checkSblaf(sblafDoc('with-errors/SBLAF_RB0001_2026-4_errors.xml'));
+  assert.deepStrictEqual(r.findings.map((f) => f.code).sort(), ['REQ-SBLAF-A-1', 'STG1-SBLAF-Q-MAIN-APPROVED LOANS-R0020', 'STG1-SBLAF-Q-MAIN-NO. OF LOAN APPLICATIONS-R0100',
+    'STG1-SBLAF-Q-MAIN-TOTAL-AMOUNT OF APPROVED LOANS', 'STG1-SBLAF-Q-MAIN-TOTAL-RECEIVED', 'XSD-REQUIRED', 'XSD-TYPE']);
+  const missing = r.findings.find((f) => f.code === 'XSD-REQUIRED');
+  assert.deepStrictEqual(missing.cells, ['R0340C0010', 'R0340C0020', 'R0340C0040', 'R0340C0050', 'R0340C0060'], 'the cells the BSP sandbox named');
+  assert.ok(/are missing in table \[MAIN\] of form \[SBLAF-Q\]/.test(missing.msg));
+  assert.ok(/R0030C0070: "0" is not written the way the schema expects \(NA\|\[1-9\]\[0-9\]\*\)/.test(r.findings.find((f) => f.code === 'XSD-TYPE').msg));
+});
+
+test('SBLAF: every cell of MAIN is required, and a value typed in clears that', async () => {
+  const doc = sblafDoc('clean/SBLAF_RB0001_2026-1.xml');
+  delete doc.forms['SBLAF-Q'][0].tables.MAIN.cells.R0370C0060;
+  // the blank cell also counts as nothing in the totals it belongs to
+  assert.deepStrictEqual(checkSblaf(doc).findings.map((f) => f.code + ' ' + (f.cells || '')), ['XSD-REQUIRED R0370C0060', 'STG1-SBLAF-Q-MAIN-TOTAL-AMOUNT OF APPROVED LOANS ']);
+  EDIT.setValue(sblaf, doc, { form: 'SBLAF-Q', table: 'MAIN', cell: 'R0370C0060' }, '1,000,000.00');
+  assert.deepStrictEqual(checkSblaf(doc).findings, []);
+  // a schedule sent with no MAIN at all is what the schema allows
+  assert.deepStrictEqual(checkSblaf(ENGINE.readXml(fx.buildXml(sblaf, { year: 2026, period: 1, forms: { 'SBLAF-Q': {} } }), sblaf)).findings, []);
+
+  // in a workbook: the blank cells are named, with what to type
+  const book = await TEMPLATE.readWorkbook((await EXPORTER.toXlsx(sblaf, sblafDoc('clean/SBLAF_RB0001_2026-1.xml'))).bytes);
+  const sheet = book.sheets.find((s) => s.name === 'SBLAF-Q');
+  Object.keys(sheet.rows).forEach((rn) => { if (sheet.rows[rn][4] === 'R0340') [5, 6, 8, 9, 10].forEach((c) => { delete sheet.rows[rn][c]; }); });
+  const tdoc = TEMPLATE.readTemplate(book, sblaf, TEMPLATE.readHeader(book, sblaf));
+  const f = checkSblaf(tdoc).findings;
+  assert.deepStrictEqual(f.filter((x) => x.code === 'XSD-REQUIRED').map((x) => x.cells.length), [5]);
+  assert.ok(/SBLAF-Q \/ MAIN: 5 cells are empty: R0340C0010 \(None \| Number of Loan Applications \/ Received\)/.test(f[0].msg) && /with 0 where there is nothing to report/.test(f[0].msg), f[0].msg);
+});
+
+test('SBLAF: quarter 4 holds the annual schedule, checked against the four quarters', () => {
+  const quarter = (period, scale) => {
+    const main = Object.assign({}, sblafDoc('clean/SBLAF_RB0001_2026-1.xml').forms['SBLAF-Q'][0].tables.MAIN.cells);
+    Object.keys(main).forEach((c) => { main[c] = main[c].raw; });
+    ['R0010', 'R0020'].forEach((r) => ['C0010', 'C0020', 'C0030', 'C0040'].forEach((c) => { main[r + c] = String(Number(main[r + c]) * scale); }));
+    return main;
+  };
+  const q = [1, 2, 3].map((p) => ENGINE.readXml(fx.buildXml(sblaf, { year: 2026, period: p, forms: { 'SBLAF-Q': { MAIN: quarter(p, 1) } } }), sblaf));
+  assert.deepStrictEqual(q.map((d) => ENGINE.historyKey(sblaf, d)), ['2026-03', '2026-06', '2026-09'], 'a quarter stands for its last month');
+  const history = { '2026-03': q[0], '2026-06': q[1], '2026-09': q[2] };
+  // the annual counts four quarters of firm-size applications (here each quarter has the same)
+  const annual = quarter(4, 4);
+  const q4 = (a) => ENGINE.readXml(fx.buildXml(sblaf, { year: 2026, period: 4, forms: { 'SBLAF-Q': { MAIN: quarter(4, 1) }, 'SBLAF-A': { MAIN: a } } }), sblaf);
+  const rule = (r) => r.findings.filter((f) => /^RIN-SBLAF/.test(f.code)).map((f) => f.code + ' ' + f.left + ' ' + f.right);
+  let r = checkSblaf(q4(annual), { history });
+  assert.deepStrictEqual(rule(r), []);
+  assert.ok(!r.findings.some((f) => f.code === 'REQ-SBLAF-A-1'));
+  r = checkSblaf(q4(Object.assign({}, annual, { R0010C0010: '79' })), { history });
+  assert.deepStrictEqual(rule(r), ['RIN-SBLAF-20-TOTAL NUMBER OF LOAN APPLICATIONS 179 180']);
+  // without the earlier quarters the rule is not checked, never failed
+  r = checkSblaf(q4(Object.assign({}, annual, { R0010C0010: '79' })));
+  assert.deepStrictEqual(rule(r), []);
+  assert.ok(r.stats.skipped.history >= 1, JSON.stringify(r.stats.skipped));
+  // an annual schedule in another quarter is refused
+  r = checkSblaf(ENGINE.readXml(fx.buildXml(sblaf, { year: 2026, period: 2, forms: { 'SBLAF-Q': { MAIN: quarter(2, 1) }, 'SBLAF-A': { MAIN: annual } } }), sblaf));
+  assert.ok(r.findings.some((f) => f.code === 'REQ-SBLAF-A-2'));
 });
 
 // ---- writing the XML from a template --------------------------------------------
@@ -784,6 +852,7 @@ test('index.html is the current build of src/', () => {
   spec = await SPEC.load('FRP_S');
   wrr = await SPEC.load('WRR_RCB');
   afrd = await SPEC.load('AFRD');
+  sblaf = await SPEC.load('SBLAF');
   let failed = 0;
   for (const [name, fn] of tests) {
     try {

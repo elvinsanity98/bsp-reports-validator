@@ -7,6 +7,7 @@ It reads the file on your own computer and reports what the BSP's validation wou
 | --- | --- | --- |
 | `AFRD` | 1.0 | AFRD Financing (Mandatory Agriculture, Fisheries and Rural Development Financing) |
 | `FRP_S` | 15.0 | Simplified FRP and FRP Related Reports |
+| `SBLAF` | 1.0 (specification 1.0.2) | Report on Business Loan Applications using SBLAF Templates |
 | `WRR_RCB` | 1.0 | Weekly Reserves Report for Rural and Cooperative Banks |
 
 Open `index.html` in a current Chrome, Edge or Firefox, or use https://elvinsanity98.github.io/bsp-reports-validator/.
@@ -27,11 +28,12 @@ The tool recognises which report a file is, from the root element of the XML or 
 ## What it checks
 
 1. **File and schema** (`XML-`, `XSD-`): well-formed XML, the right namespace, a complete Header, every schedule the schema requires
+   (and every cell, where a table requires all of them, as SBLAF's does)
    and only schedules, tables and cells it knows, no totals that the BSP calculates itself, and every value in the right format
    (amounts with at most 2 decimals and no commas, whole numbers, code lists, dates, text lengths). The BSP reports these as `XSD-0001`.
 2. **Conditional cells** (`COND-0001`): a value in a cell whose condition is false, for example a column the report does not use
    or a line meant for another type of bank. The BSP rejects it with the same code.
-3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S, 64 for AFRD, 5 for WRR_RCB).
+3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S, 150 for SBLAF, 64 for AFRD, 5 for WRR_RCB).
    - `REQ-` schedules that must, or must not, be submitted for the period and bank type
    - `STG1-` checks on single cells and groups of cells
    - `RIN-` reconciliations inside a schedule and between schedules, each with its tolerance
@@ -64,6 +66,7 @@ A rule or conditional cell that needs a fact left blank is counted as **not chec
 ## Earlier periods
 
 About 50 FRP_S rules compare the period with an earlier one (last month, last quarter, last year, the last three year-ends).
+In SBLAF, the annual schedule filed with quarter 4 must equal quarters 1 to 4 added up; add the XML files of quarters 1 to 3 for that rule.
 Add those submissions under **Earlier periods** and the rules run. Without them they are counted as not checked.
 
 ## Command line
@@ -98,6 +101,8 @@ node cli.js samples/clean/FRP_S_RB0001_2026-03.xml --bank RB --offices 2 --branc
 node cli.js samples/clean/WRR_RCB_RB0001_2026-09-18.xml --bank RB
 node cli.js samples/clean/AFRD_RB0001_2026-2.xml --bank RB --subsidiaries 0
 node cli.js samples/with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml --bank RB
+node cli.js samples/clean/SBLAF_RB0001_2026-1.xml
+node cli.js SBLAF_2026_4_<bank>_<date>.xml --prior SBLAF_2026_1_<bank>_<date>.xml --prior <quarter 2> --prior <quarter 3>
 ```
 
 `samples/README.txt` lists the sample files and the profile they assume. All figures in them are made up.
@@ -248,6 +253,16 @@ The tool was compared with the BSP's own processing results for the past submiss
 - 1 rejected sandbox attempt whose file was not kept, so nothing could be compared.
 - Values read from three filled Excel templates equal the values in the XML filed for the same quarter (44 of 45 cells; the one difference was edited in between).
 
+**SBLAF**, 7 processing results from April 2025 to July 2026:
+
+- 6 accepted submissions: the tool reports nothing on any of them.
+- 1 rejected sandbox attempt whose file was kept: the BSP named five empty cells of `MAIN` (`XSD-0001`, "Cells ... are missing");
+  the tool names the same five, from the XML and from the workbook it was made from.
+- With quarters 1 to 3 loaded, the 2025 annual schedule fails `RIN-SBLAF-20` (218 applications in the annual schedule, 214 in the four quarters).
+  The BSP accepted that file in January 2026. The tool uses specification 1.0.2, while the bank's templates up to July 2026 are 1.0,
+  so the rule was most likely added or tightened since. Expect it at the next quarter 4.
+- Values read from the filled Excel templates equal the values in the XML filed for the same quarter (221 cells, 442 with the annual schedule).
+
 This is evidence from one bank that files only a part of the schedules (no trust, e-money, FCDU or foreign-office business).
 Rules that this bank's data never exercises are untested against the BSP.
 
@@ -260,7 +275,8 @@ Rules that this bank's data never exercises are untested against the BSP.
   requires in every file (all of AFRD, and WRR): its sheet counts as filed even when nil, because the XML must carry it either way.
 - **Workbooks that only look like the template.** The Excel view the BSP sends back and the specification workbook use the same
   sheet names. They are refused (`TPL-LAYOUT`) instead of being read as an empty template.
-- **Blank cells count as zero** in every calculation and comparison.
+- **Blank cells count as zero** in every calculation and comparison. Where a table requires every cell (SBLAF), a blank cell is
+  also an error of its own, and still counts as zero in the totals.
 - **Derived schedules** (FRPTI_B, FRPTI_C, FRPTI_D, FRPTI_E1, FRPTI_E2, MLR_I, MSME_MR) are built by the BSP from other schedules.
   They are treated as present when at least one of their source schedules is present.
 - **Ratios with a zero base** cannot be worked out; the rules that use them are counted as not checked.

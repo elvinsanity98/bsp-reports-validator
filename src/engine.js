@@ -162,7 +162,7 @@
     }
     if (type.minLen !== undefined && len < Number(type.minLen)) return { err: len === 0 ? 'is empty; it is required text' : 'is shorter than ' + type.minLen + ' characters' };
     if (type.maxLen !== undefined && len > Number(type.maxLen)) return { err: 'is ' + len + ' characters long; the limit is ' + type.maxLen };
-    if (type.re && !type.re.test(raw)) return { err: /^\s/.test(raw) ? 'starts with a space' : 'is not written the way the schema expects' };
+    if (type.re && !type.re.test(raw)) return { err: /^\s/.test(raw) ? 'starts with a space' : 'is not written the way the schema expects (' + type.pat + ')' };
     return { v: raw };
   }
 
@@ -433,6 +433,32 @@
     });
   }
 
+  // Cells the schema requires in a table that is in the file (SBLAF: every
+  // cell of MAIN). Worked out at each check, so a value typed in on the page
+  // clears it. The BSP reports these as XSD-0001 "Cells ... are missing".
+  function missingCells(spec, doc, findings) {
+    var sheet = doc.source === 'xlsx';
+    spec.forms.forEach(function (form) {
+      (doc.forms[form.n] || []).forEach(function (inst) {
+        form.tb.forEach(function (t) {
+          var data = inst.tables[t.n];
+          if (!t.x || t.k !== 'S' || !data) return;
+          var missing = Object.keys(t.c).filter(function (code) { var d = t.c[code]; return d[0] === 0 && cellRequired(d) && !data.cells[code]; });
+          if (!missing.length) return;
+          var some = missing.slice(0, 6).map(function (code) { var l = SPEC.cellLabel(t, code); return code + (l ? ' (' + l + ')' : ''); }).join(', ');
+          var rest = missing.length > 6 ? ' and ' + (missing.length - 6) + ' more' : '';
+          findings.push({
+            sev: 'error', code: 'XSD-REQUIRED', kind: 'file', form: form.n, table: t.n, cells: missing, line: inst.line,
+            msg: sheet
+              ? form.n + ' / ' + t.n + ': ' + missing.length + (missing.length === 1 ? ' cell is' : ' cells are') + ' empty: ' + some + rest +
+                '. The schema requires every cell of this table; fill each one in, with 0 where there is nothing to report.'
+              : 'Cells ' + some + rest + ' are missing in table [' + t.n + '] of form [' + form.n + ']. The schema requires every cell of this table; populate all missing cells.'
+          });
+        });
+      });
+    });
+  }
+
   // Turns the bytes of a file into text, honouring a byte-order mark or the
   // encoding named in the <?xml ...?> line. Returns { text, encoding, damaged }.
   function decode(bytes) {
@@ -637,11 +663,12 @@
   };
 
   // The month a DWHS("Q-1"; ...) style reference points at, as 'YYYY-MM'.
+  // A quarterly report stands for the last month of its quarter.
   Evaluator.prototype.periodKey = function (code) {
     var y = this.doc.header.Year && this.doc.header.Year.v, p = this.doc.header.Period && this.doc.header.Period.v;
     var m = /^(M|Q|Y|YE)-(\d+)$/.exec(String(code));
     if (typeof y !== 'number' || typeof p !== 'number' || !m) return null;
-    var n = +m[2], months = y * 12 + (p - 1);
+    var n = +m[2], months = y * 12 + (this.spec.periodStyle === 'quarter' ? p * 3 : p) - 1;
     if (m[1] === 'M') months -= n;
     else if (m[1] === 'Q') months -= 3 * n;
     else if (m[1] === 'Y') months -= 12 * n;
@@ -701,8 +728,26 @@
             a = scalar(this.eval(n.args[0], ctx));
             if (isUnk(a)) return a;
             return scalar(this.eval(truthy(a) ? n.args[1] : n.args[2], ctx));
+          case 'IFNULL':
+            // an earlier period that was not loaded stays unknown; one loaded without the value counts as the default
+            a = scalar(this.eval(n.args[0], ctx));
+            if (isUnk(a)) return a;
+            return a === null || a === '' ? scalar(this.eval(n.args[1], ctx)) : a;
           case 'SUM': case 'SUMIF': case 'COUNTIF': case 'COUNT':
-            var it = n.args[0], list = this.rows(it.t === 'iter' ? it.list : it, ctx);
+            var it = n.args[0];
+            if (n.fn === 'SUM' && it.t !== 'iter' && it.t !== 'ref') {
+              // SUM(a + b + c): the sum of plain values, as in a spreadsheet (SBLAF)
+              var plain = 0;
+              for (i = 0; i < n.args.length; i++) {
+                a = scalar(this.eval(n.args[i], ctx));
+                if (isUnk(a)) return a;
+                if (a === null || a === '') continue;
+                if (!numeric(a)) return unk('text used as a number');
+                plain += num(a);
+              }
+              return plain;
+            }
+            var list = this.rows(it.t === 'iter' ? it.list : it, ctx);
             if (isUnk(list)) return list;
             if (n.fn === 'COUNT') return list.length;
             var vars = Object.create(ctx.vars), inner = { form: ctx.form, table: ctx.table, item: ctx.item, vars: vars };
@@ -898,6 +943,7 @@
       cellsNotChecked: 0, cellsNotCheckedWhy: {} };
     var result = { doc: doc, findings: findings, stats: stats, spec: spec };
     if (doc.fatal) return finish(result);
+    missingCells(spec, doc, findings);
 
     var history = {};
     Object.keys(opts.history || {}).forEach(function (k) {
@@ -1085,6 +1131,14 @@
     if (days !== 6) warn('ToDate', 'FromDate to ToDate covers ' + (days + 1) + ' day(s). The report week is the 7 days from Friday to Thursday.');
   }
 
+  // The 'YYYY-MM' an earlier period's file is kept under, the month DWHS
+  // counts back from (a quarter: its last month). null when the header cannot say.
+  function historyKey(spec, doc) {
+    var y = doc.header.Year && doc.header.Year.v, p = doc.header.Period && doc.header.Period.v;
+    if (doc.fatal || typeof y !== 'number' || typeof p !== 'number') return null;
+    return y + '-' + ('0' + (spec.periodStyle === 'quarter' ? p * 3 : p)).slice(-2);
+  }
+
   function finish(result) {
     var c = { error: 0, warning: 0, info: 0 };
     result.findings.forEach(function (f) { c[f.sev]++; });
@@ -1107,6 +1161,7 @@
 
   return {
     readXml: readXml, readXmlBytes: readXmlBytes, decode: decode, required: required, check: check, checkValue: checkValue, typeWords: typeWords,
+    historyKey: historyKey,
     Evaluator: Evaluator, compare: compare, fmt: fmt, isUnknown: isUnk, show: show
   };
 });

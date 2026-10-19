@@ -104,7 +104,41 @@ function afrdBroken(afrd) {
   return fx.buildXml(afrd, { year: 2026, period: 2, forms });
 }
 
-Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD')]).then(([spec, wrr, afrd]) => {
+// SBLAF: every cell of MAIN is required, zeros included. Firm size, industry,
+// gender, years in operation, loan size and collateral each add up to the same
+// totals: 23 applications received, 10 approved secured, 9 approved unsecured,
+// 3 rejected, 1 under evaluation, 21,500,000.00 approved.
+function sblafMain(sblaf) {
+  const table = sblaf.formByName['SBLAF-Q'].tableByName.MAIN;
+  const rows = {
+    R0010: [20, 8, 9, 2, 1, '9500000.00', '7'], R0020: [3, 2, 0, 1, 0, '12000000.00', '10'], R0030: [0, 0, 0, 0, 0, '0.00', 'NA'],
+    R0040: [15, 6, 6, 2, 1, '12000000.00'], R0100: [8, 4, 3, 1, 0, '9500000.00'],
+    R0250: [13, 6, 5, 2, 0, '11000000.00'], R0260: [10, 4, 4, 1, 1, '10500000.00'],
+    R0270: [5, 2, 2, 1, 0, '4000000.00'], R0280: [10, 4, 4, 1, 1, '9000000.00'], R0290: [8, 4, 3, 1, 0, '8500000.00'],
+    R0300: [6, 1, 4, 1, 0, '1000000.00'], R0310: [9, 4, 4, 1, 0, '4500000.00'], R0320: [7, 4, 1, 1, 1, '11000000.00'], R0330: [1, 1, 0, 0, 0, '5000000.00'],
+    R0340: [9, 0, null, 0, 0, '3000000.00'], R0350: [10, 7, null, 2, 1, '14500000.00'], R0360: [3, 2, null, 1, 0, '3000000.00'], R0370: [1, 1, null, 0, 0, '1000000.00']
+  };
+  const cols = ['C0010', 'C0020', 'C0030', 'C0040', 'C0050', 'C0060', 'C0070'];
+  const main = {};
+  Object.keys(table.c).forEach((code) => {
+    const v = (rows[code.slice(0, 5)] || [])[cols.indexOf(code.slice(5))];
+    main[code] = v === undefined || v === null ? (code.slice(5) === 'C0060' ? '0.00' : code.slice(5) === 'C0070' ? 'NA' : '0') : String(v);
+  });
+  return main;
+}
+
+function sblafBroken(sblaf) {
+  const main = sblafMain(sblaf);
+  ['R0340C0010', 'R0340C0020', 'R0340C0040', 'R0340C0050', 'R0340C0060'].forEach((c) => { delete main[c]; });   // left blank, as in a real sandbox run
+  main.R0030C0070 = '0';                         // days to process: NA or a whole number from 1
+  main.R0020C0060 = '0.00';                      // approved loans with no amount
+  main.R0100C0010 = '9';                         // industry no longer adds up to firm size
+  return fx.buildXml(sblaf, { year: 2026, period: 4, forms: { 'SBLAF-Q': { MAIN: main } } });   // quarter 4 without the annual schedule
+}
+
+Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.load('SBLAF')]).then(([spec, wrr, afrd, sblaf]) => {
+  write('clean/SBLAF_RB0001_2026-1.xml', fx.buildXml(sblaf, { year: 2026, period: 1, forms: { 'SBLAF-Q': { MAIN: sblafMain(sblaf) } } }));
+  write('with-errors/SBLAF_RB0001_2026-4_errors.xml', sblafBroken(sblaf));
   write('clean/AFRD_RB0001_2026-2.xml', fx.buildXml(afrd, { year: 2026, period: 2, forms: afrdClean(afrd) }));
   write('with-errors/AFRD_RB0001_2026-2_errors.xml', afrdBroken(afrd));
   write('clean/FRP_S_RB0001_2026-03.xml', fx.buildXml(spec, { period: 3, forms: quarter(spec) }));
@@ -129,9 +163,11 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD')]).then(
     'clean/FRP_S_RB0001_2026-02.xml         FRP monthly file, no findings',
     'clean/WRR_RCB_RB0001_2026-09-18.xml    weekly reserves report, no findings',
     'clean/AFRD_RB0001_2026-2.xml           AFRD financing report for a quarter, no findings (profile: no subsidiaries)',
+    'clean/SBLAF_RB0001_2026-1.xml          SBLAF business loan applications for a quarter, no findings',
     'with-errors/FRP_S_RB0001_2026-03_errors.xml       schema errors, a missing schedule, failed reconciliations',
     'with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml  bad amounts, a thrift-bank line, an unnamed "others" line, a wrong week',
     'with-errors/AFRD_RB0001_2026-2_errors.xml         a missing list, a comma, a retired column, totals that do not agree',
+    'with-errors/SBLAF_RB0001_2026-4_errors.xml        blank cells, a 0 for "NA", an approval with no amount, no annual schedule',
     'with-errors/not-well-formed.xml        a closing tag that does not match',
     '',
     'All figures are made up. The page recognises which report a file is.',
@@ -140,6 +176,7 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD')]).then(
     '  node cli.js samples/clean/FRP_S_RB0001_2026-03.xml --bank RB --offices 2 --branches samples/branches.csv',
     '  node cli.js samples/clean/WRR_RCB_RB0001_2026-09-18.xml --bank RB',
     '  node cli.js samples/clean/AFRD_RB0001_2026-2.xml --bank RB --subsidiaries 0',
+    '  node cli.js samples/clean/SBLAF_RB0001_2026-1.xml',
     ''
   ].join('\r\n'));
   write('branches.csv', '001,9,4\r\n002,9,4\r\n');
