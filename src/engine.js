@@ -788,6 +788,10 @@
             return best;
           case 'ROW':
             return ctx.item ? ctx.item.index + 1 : null;
+          case 'LEN':
+            a = scalar(this.eval(n.args[0], ctx));
+            if (isUnk(a)) return a;
+            return a === null ? 0 : String(a).length;
           case 'RCTX':
             a = scalar(this.eval(n.args[0], ctx));
             return a === 'RCODE' ? this.spec.report : unk('the submission context "' + a + '"');
@@ -953,6 +957,7 @@
     result.evaluator = ev;
 
     sanity(spec, doc, findings);
+    branchNames(spec, doc, findings);
 
     // Conditional cells: the specification gives a cell a condition, and the
     // BSP rejects a value reported while the condition is false (its COND-0001).
@@ -978,13 +983,18 @@
               // The BSP is known to reject a non-zero value here. A reported zero
               // has not been seen in its results either way, so it is a warning.
               var zero = d.v === 0;
+              // The portal leaves such a value out when it turns a template into XML
+              // (seen in BCCR: "NONE" and 0 typed in "Specify others" cells); so does
+              // Export to XML here. In an XML file the BSP rejects it.
+              var sheet = doc.source === 'xlsx';
               findings.push({
-                sev: zero ? 'warning' : 'error', code: 'COND-0001', kind: 'cell', form: name, table: tn, cell: code,
-                item: base.kind === 'item' ? base.index : undefined, line: d.line, loc: d.loc, value: d.v,
+                sev: zero || sheet ? 'warning' : 'error', code: 'COND-0001', kind: 'cell', form: name, table: tn, cell: code,
+                item: base.kind === 'item' ? base.index : undefined, line: d.line, loc: d.loc, value: d.v, drop: sheet || undefined,
                 label: SPEC.cellLabel(t.spec, code),
                 msg: 'Conditional field [' + name + '][' + tn + '][' + code + '] should not be reported: the cell ' +
                   condWords(spec.conds[def[2]]) + '. It holds ' + fmt(d.v) +
-                  (zero ? '. The BSP rejects a value here and may reject a zero too; leave it blank.' : '; leave it blank.')
+                  (sheet ? '. The BSP portal leaves it out when it reads the template, and Export to XML here does the same; in an XML file the BSP rejects it.'
+                    : zero ? '. The BSP rejects a value here and may reject a zero too; leave it blank.' : '; leave it blank.')
               });
             });
           });
@@ -1129,6 +1139,44 @@
     var day = new Date(a).getUTCDay();
     if (day !== 5) warn('FromDate', 'FromDate (' + from.v + ') is a ' + NAMES[day] + '. The report week starts on a Friday.');
     if (days !== 6) warn('ToDate', 'FromDate to ToDate covers ' + (days + 1) + ' day(s). The report week is the 7 days from Friday to Thursday.');
+  }
+
+  // A branch-code cell holding an office's name ("RURAL BANK OF ...") instead
+  // of its code. The portal turns the name into the code when it reads a
+  // template (BCCR); this tool cannot, so it says so, once per table.
+  function branchNames(spec, doc, findings) {
+    Object.keys(doc.forms).forEach(function (name) {
+      var form = spec.formByName[name];
+      if (!form) return;
+      doc.forms[name].forEach(function (inst) {
+        Object.keys(inst.tables).forEach(function (tn) {
+          var t = form.tableByName[tn], data = inst.tables[tn];
+          if (!t) return;
+          var bases = data.items ? data.items.map(function (it, i) { return { cells: it.cells, item: i }; }) : [{ cells: data.cells }];
+          var hits = {};
+          bases.forEach(function (b) {
+            Object.keys(b.cells).forEach(function (code) {
+              var def = t.c[code], rec = b.cells[code];
+              if (!def || def[0] !== 0 || !/^Ptype_branch_code/.test(cellType(spec, def).n)) return;
+              if (typeof rec.v !== 'string' || !/[A-Za-z]{2,}/.test(rec.v) || !/\s/.test(rec.v.trim())) return;
+              (hits[code] = hits[code] || []).push({ item: b.item, rec: rec });
+            });
+          });
+          Object.keys(hits).forEach(function (code) {
+            var h = hits[code], label = SPEC.cellLabel(t, code) || code;
+            findings.push({
+              sev: 'warning', code: 'CHECK-BRANCH', kind: 'file', form: name, table: tn, cell: code, item: h[0].item,
+              line: h[0].rec.line, loc: h[0].rec.loc,
+              msg: name + ' / ' + tn + ': ' + label + ' holds a name, "' + h[0].rec.v.slice(0, 60) + '"' +
+                (h.length > 1 ? ', in ' + h.length + ' entries' : '') + ', not a branch code. ' +
+                (doc.source === 'xlsx'
+                  ? 'The BSP portal turns the office\'s name into its code when it reads the template; this tool cannot, so Export to XML would write the name. Type the code instead, as in the XML the portal saved for an earlier period.'
+                  : 'Write the branch code the BSP has for the office.')
+            });
+          });
+        });
+      });
+    });
   }
 
   // The 'YYYY-MM' an earlier period's file is kept under, the month DWHS

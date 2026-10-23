@@ -164,7 +164,7 @@ async function main() {
   let code = r.counts.error ? 1 : 0;
   if (o['save-xlsx'] || o['save-xml']) code = 0;
   if (o['save-xlsx']) code = Math.max(code, await saveXlsx(spec, doc, file));
-  if (o['save-xml']) code = Math.max(code, saveXml(spec, doc, file));
+  if (o['save-xml']) code = Math.max(code, saveXml(spec, doc, file, r));
   process.exit(code);
 }
 
@@ -181,9 +181,9 @@ async function saveXlsx(spec, doc, file) {
 }
 
 // Writes the file as the XML submission file, then checks the file written.
-function saveXml(spec, doc, file) {
+function saveXml(spec, doc, file, result) {
   console.log('');
-  const out = EXPORTER.toXml(spec, doc);
+  const out = EXPORTER.toXml(spec, doc, { result });
   if (out.problems.length) {
     console.log('No XML written. Fix these first:');
     out.problems.forEach((p) => console.log('  ' + p));
@@ -193,6 +193,7 @@ function saveXml(spec, doc, file) {
   fs.writeFileSync(target, out.xml);
   console.log('XML written: ' + target);
   out.rounded.forEach((x) => console.log('  rounded ' + x.where + ': ' + x.from + ' -> ' + x.to + ' (rounding noise from Excel)'));
+  out.dropped.forEach((x) => console.log('  left out ' + x + ' (conditional cell not in use; the BSP portal leaves it out too)'));
   const back = ENGINE.check(spec, ENGINE.readXml(out.xml, spec), { profile: lastProfile });
   console.log('Check of the written file: ' + back.counts.error + ' error(s), ' + back.counts.warning + ' warning(s)');
   back.findings.slice(0, 20).forEach((f) => console.log(`  ${f.sev.toUpperCase().padEnd(7)} ${f.code}: ${f.msg}`));

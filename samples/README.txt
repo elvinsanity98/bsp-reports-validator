@@ -14,10 +14,12 @@ clean/FRP_S_RB0001_2026-02.xml         FRP monthly file, no findings
 clean/WRR_RCB_RB0001_2026-09-18.xml    weekly reserves report, no findings
 clean/AFRD_RB0001_2026-2.xml           AFRD financing report for a quarter, no findings (profile: no subsidiaries)
 clean/SBLAF_RB0001_2026-1.xml          SBLAF business loan applications for a quarter, no findings
+clean/BCCR_RB0001_2026-1.xml           consumer complaints for a quarter, one office, no findings
 with-errors/FRP_S_RB0001_2026-03_errors.xml       schema errors, a missing schedule, failed reconciliations
 with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml  bad amounts, a thrift-bank line, an unnamed "others" line, a wrong week
 with-errors/AFRD_RB0001_2026-2_errors.xml         a missing list, a comma, a retired column, totals that do not agree
 with-errors/SBLAF_RB0001_2026-4_errors.xml        blank cells, a 0 for "NA", an approval with no amount, no annual schedule
+with-errors/BCCR_RB0001_2026-3_errors.xml         a month of another quarter, a name for absent "others", a blank count, schedules that disagree
 with-errors/not-well-formed.xml        a closing tag that does not match
 
 All figures are made up. The page recognises which report a file is.
@@ -27,3 +29,4 @@ From the command line:
   node cli.js samples/clean/WRR_RCB_RB0001_2026-09-18.xml --bank RB
   node cli.js samples/clean/AFRD_RB0001_2026-2.xml --bank RB --subsidiaries 0
   node cli.js samples/clean/SBLAF_RB0001_2026-1.xml
+  node cli.js samples/clean/BCCR_RB0001_2026-1.xml

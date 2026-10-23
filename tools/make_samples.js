@@ -136,7 +136,45 @@ function sblafBroken(sblaf) {
   return fx.buildXml(sblaf, { year: 2026, period: 4, forms: { 'SBLAF-Q': { MAIN: main } } });   // quarter 4 without the annual schedule
 }
 
-Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.load('SBLAF')]).then(([spec, wrr, afrd, sblaf]) => {
+// BCCR: one office (branch 001), one entry per month in every schedule, every
+// count filled in (zeros included). Each month's complaints are counted the same
+// way in every schedule: by product, channel, issue, standard of conduct, sex,
+// age, region and status.
+function bccrForms(bccr, months, perMonth) {
+  const forms = {};
+  bccr.forms.forEach((form) => {
+    const t = form.tb[0];
+    forms[form.n] = { MAIN: months.map((m, i) => {
+      const row = {};
+      Object.keys(t.c).forEach((c) => {
+        const def = t.c[c];
+        if (def[0] !== 0) return;
+        const type = bccr.types[Array.isArray(def[1]) ? def[1][0] : def[1]];
+        if (c === 'C0010') row[c] = String(m);
+        else if (c === 'C0030') row[c] = '001';
+        else if (type.b === 'd') row[c] = '0';
+      });
+      const n = String(perMonth[i]);
+      ({ BCCR_PRODUCT: ['C0070'], BCCR_CHANNEL: ['C0050'], BCCR_ISSUES: ['C0050'], BCCR_SOC: ['C0060'],
+        BCCR_DEMOGRAPHICS: ['C0060', 'C0110', 'C0280'], BCCR_STATUS: ['C0180', 'C0230'], BCCR_BSP_REFERRED: [] })[form.n].forEach((c) => { row[c] = n; });
+      return row;
+    }) };
+  });
+  return forms;
+}
+
+function bccrBroken(bccr) {
+  const forms = bccrForms(bccr, [7, 8, 9], [3, 1, 2]);
+  forms.BCCR_SOC.MAIN[2].C0010 = '10';                       // a month outside quarter 3
+  forms.BCCR_DEMOGRAPHICS.MAIN[0].C0090 = 'NONE';             // a name for "others" that are not there
+  delete forms.BCCR_STATUS.MAIN[2].C0250;                     // a count left blank
+  forms.BCCR_ISSUES.MAIN[0].C0050 = '2';                      // issues no longer add up to the products
+  return fx.buildXml(bccr, { year: 2026, period: 3, forms });
+}
+
+Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.load('SBLAF'), SPEC.load('BCCR')]).then(([spec, wrr, afrd, sblaf, bccr]) => {
+  write('clean/BCCR_RB0001_2026-1.xml', fx.buildXml(bccr, { year: 2026, period: 1, forms: bccrForms(bccr, [1, 2, 3], [3, 0, 2]) }));
+  write('with-errors/BCCR_RB0001_2026-3_errors.xml', bccrBroken(bccr));
   write('clean/SBLAF_RB0001_2026-1.xml', fx.buildXml(sblaf, { year: 2026, period: 1, forms: { 'SBLAF-Q': { MAIN: sblafMain(sblaf) } } }));
   write('with-errors/SBLAF_RB0001_2026-4_errors.xml', sblafBroken(sblaf));
   write('clean/AFRD_RB0001_2026-2.xml', fx.buildXml(afrd, { year: 2026, period: 2, forms: afrdClean(afrd) }));
@@ -164,10 +202,12 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.l
     'clean/WRR_RCB_RB0001_2026-09-18.xml    weekly reserves report, no findings',
     'clean/AFRD_RB0001_2026-2.xml           AFRD financing report for a quarter, no findings (profile: no subsidiaries)',
     'clean/SBLAF_RB0001_2026-1.xml          SBLAF business loan applications for a quarter, no findings',
+    'clean/BCCR_RB0001_2026-1.xml           consumer complaints for a quarter, one office, no findings',
     'with-errors/FRP_S_RB0001_2026-03_errors.xml       schema errors, a missing schedule, failed reconciliations',
     'with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml  bad amounts, a thrift-bank line, an unnamed "others" line, a wrong week',
     'with-errors/AFRD_RB0001_2026-2_errors.xml         a missing list, a comma, a retired column, totals that do not agree',
     'with-errors/SBLAF_RB0001_2026-4_errors.xml        blank cells, a 0 for "NA", an approval with no amount, no annual schedule',
+    'with-errors/BCCR_RB0001_2026-3_errors.xml         a month of another quarter, a name for absent "others", a blank count, schedules that disagree',
     'with-errors/not-well-formed.xml        a closing tag that does not match',
     '',
     'All figures are made up. The page recognises which report a file is.',
@@ -177,6 +217,7 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.l
     '  node cli.js samples/clean/WRR_RCB_RB0001_2026-09-18.xml --bank RB',
     '  node cli.js samples/clean/AFRD_RB0001_2026-2.xml --bank RB --subsidiaries 0',
     '  node cli.js samples/clean/SBLAF_RB0001_2026-1.xml',
+    '  node cli.js samples/clean/BCCR_RB0001_2026-1.xml',
     ''
   ].join('\r\n'));
   write('branches.csv', '001,9,4\r\n002,9,4\r\n');

@@ -368,12 +368,13 @@ def build(xsd, raw):
         code, msg = clean(r[0]), clean(r[1])
         # some messages repeat their own code in front; the code is shown anyway
         msg = re.sub(r'^STG1-[A-Za-z0-9_.-]+: ', '', msg) if code.startswith('STG1-') else msg
-        if msg.startswith(code + ': '):
-            msg = msg[len(code) + 2:]
-        elif msg.startswith(code + '. '):
-            msg = msg[len(code) + 2:]
-        elif msg.startswith(code + ' '):
-            msg = msg[len(code) + 1:]
+        # also written with _ for - or a space ("STG1-BCCR_CHANNEL_OTHER ..."), and followed by
+        # ": ", ". ", ".", " - " or "-"
+        def loose(t):
+            return re.sub(r'[\s_-]', '-', t).upper()
+        if loose(msg[:len(code)]) == loose(code) and (len(msg) == len(code) or msg[len(code)] in ' .:-'):
+            msg = msg[len(code):]
+        msg = re.sub(r'^[\s.:-]+', '', msg)
         rule = [code, msg, clean(r[2]), r[3], clean(r[4]), r[5] or 0,
                 clean(r[6]) or 0, clean(r[7]) or 0, 1 if r[8] == 'Warning' else 0]
         key = json.dumps(rule)

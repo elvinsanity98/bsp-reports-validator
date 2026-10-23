@@ -676,7 +676,7 @@
   // The XML submission file. On the page served by `node submit.js ui` the new
   // file is opened right away, ready to send.
   function exportXml(note) {
-    var out = EXPORT.toXml(state.spec, state.doc);
+    var out = EXPORT.toXml(state.spec, state.doc, { result: state.result });
     clear(note);
     if (out.problems.length) {
       note.appendChild(h('p', { class: 'fail' }, 'No XML written. Fix these first: ' + out.problems.join(' ')));
@@ -687,6 +687,7 @@
     editStatus();
     note.appendChild(h('p', null, 'Saved ' + out.name + ' to your Downloads folder.' + (out.rounded.length ? ' Rounded: ' +
       out.rounded.map(function (x) { return x.where + ' ' + x.from + ' to ' + x.to; }).join('; ') + '.' : '')));
+    if (out.dropped.length) note.appendChild(h('p', { class: 'muted' }, 'Left out, as the BSP portal does (conditional cells not in use): ' + out.dropped.join('; ') + '.'));
     if (self.BSPV_LOCAL) {
       note.appendChild(h('p', { class: 'muted' }, 'Opening the XML here so it can be checked and sent...'));
       setTimeout(function () { chooseFile(new File([out.xml], out.name, { type: 'application/xml' })); }, 400);
@@ -882,7 +883,8 @@
     if (typeof v === 'string') { td.className = cls + ' txt'; td.textContent = v; return; }
     if (v === null) { td.className = cls; return; }
     td.className = cls + (v === 0 ? ' zero' : '');
-    td.textContent = fmt(v);
+    // a copy of the header's year is a year, not an amount
+    td.textContent = def[0] === 1 && /^\[Header\]\[\w+\]$/.test(def[1]) ? String(v) : fmt(v);
   }
 
   function listButtons(form, table, wrap, count) {
@@ -1037,12 +1039,12 @@
   var FAMILIES = [
     ['XML-, XSD-', 'File and schema: the file is well-formed XML, uses the right namespace, has a complete Header, holds every schedule the schema requires and only schedules, tables and cells it knows, has no totals the BSP calculates itself, and every value fits its format (amounts with 2 decimals, whole numbers, codes, dates, text lengths). The BSP reports these as XSD-0001.'],
     ['TPL-', 'Excel template: values typed into calculated cells, Excel error values, entries with no name, sheets that are not schedules.'],
-    ['COND-0001', 'A value in a conditional cell while its condition is false, for example a column this report does not use or a line meant for another type of bank. The BSP rejects it with the same code.'],
+    ['COND-0001', 'A value in a conditional cell while its condition is false, for example a column this report does not use or a line meant for another type of bank. The BSP rejects it with the same code; in a filled-in template the portal leaves it out instead, and so does Export to XML here.'],
     ['REQ-', 'Schedules that must be submitted for the period and bank type, and schedules that must not be.'],
     ['STG1-', 'Checks on single cells and groups of cells: amounts that cannot be negative, columns that must be filled together, a name given for every "others" line that has an amount.'],
     ['RIN-', 'Reconciliations inside a schedule and between schedules (for example a schedule total against the balance sheet), each with its own tolerance.'],
     ['XREQ-', 'Branch schedules: every banking office reported, and reported once.'],
-    ['CHECK-', 'Sanity checks of this tool, such as a report week that does not run Friday to Thursday. They are not BSP rules and are always warnings.']
+    ['CHECK-', 'Sanity checks of this tool, such as a report week that does not run Friday to Thursday, or an office name where a branch code goes. They are not BSP rules and are always warnings.']
   ];
 
   function renderRules() {
@@ -1053,7 +1055,8 @@
       var isRule = /^(REQ|STG1|RIN|XREQ)-$/.test(f[0]);
       if (isRule && !counts[f[0]]) return;
       if (f[0] === 'COND-0001' && !spec.conds.length) return;
-      if (f[0] === 'CHECK-' && !spec.header.some(function (hd) { return hd[0] === 'FromDate'; })) return;
+      if (f[0] === 'CHECK-' && !spec.header.some(function (hd) { return hd[0] === 'FromDate'; }) &&
+        !spec.types.some(function (t) { return /^Ptype_branch_code/.test(t.n); })) return;
       body.appendChild(h('tr', null, h('td', { class: 'value' }, f[0]),
         h('td', { class: 'line' }, isRule ? counts[f[0]].toLocaleString('en-US') : f[0] === 'COND-0001' ? 'by cell' : 'built in'), h('td', null, f[1])));
     });

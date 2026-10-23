@@ -2,9 +2,11 @@
 // laid out like the files the BSP portal saves (tabs, CRLF, cells in row order).
 // Used to turn a filled-in Excel input template into the file to send.
 //
-//   var out = BSPV.exporter.toXml(spec, doc, { now: new Date() });
+//   var out = BSPV.exporter.toXml(spec, doc, { now: new Date(), result: ENGINE.check(...) });
 //   out.problems   cells or header fields that cannot be written; no file then
 //   out.rounded    amounts whose Excel rounding noise was dropped (98358232.8399999 -> 98358232.84)
+//   out.dropped    template values left out as the portal does (conditional cells whose condition
+//                  is false; needs opts.result)
 //   out.xml, out.name
 //
 //   BSPV.exporter.toXlsx(spec, doc, { now }) -> Promise of { bytes, notes, name }
@@ -41,12 +43,13 @@
     return { problem: where + ': "' + raw + '" ' + (ENGINE.checkValue(type, raw).err || 'cannot be written') + '.' };
   }
 
-  function cellLines(spec, table, cells, indent, label, out) {
+  function cellLines(spec, table, cells, indent, label, out, key) {
     var lines = [];
     Object.keys(table.c).forEach(function (code) {
       var def = table.c[code], rec = cells[code];
       if (!rec || def[0] !== 0) return;
       var where = label + ' / ' + code + (rec.loc ? ' (' + rec.loc + ')' : '');
+      if (out.drop[key + '|' + code]) { out.dropped.push(where + ' "' + rec.raw + '"'); return; }
       var r = valueText(typeOf(spec, def), rec, where, out);
       if (r.problem) { out.problems.push(r.problem); return; }
       lines.push(indent + '<' + code + '>' + XML.escape(r.text) + '</' + code + '>');
@@ -73,12 +76,12 @@
       if (!data || !t.x) return;
       var label = form.n + ' / ' + t.n;
       if (t.k === 'S') {
-        lines = lines.concat(block(t.n, cellLines(spec, t, data.cells, indent + TAB, label, out), indent));
+        lines = lines.concat(block(t.n, cellLines(spec, t, data.cells, indent + TAB, label, out, form.n + '|' + t.n + '|'), indent));
         return;
       }
       var items = [];
       data.items.forEach(function (it, i) {
-        items = items.concat(block(t.item, cellLines(spec, t, it.cells, indent + TAB + TAB, label + ' entry ' + (i + 1), out), indent + TAB));
+        items = items.concat(block(t.item, cellLines(spec, t, it.cells, indent + TAB + TAB, label + ' entry ' + (i + 1), out, form.n + '|' + t.n + '|' + i), indent + TAB));
       });
       lines = lines.concat(block(t.n, items, indent));
     });
@@ -99,8 +102,11 @@
 
   function toXml(spec, doc, opts) {
     opts = opts || {};
-    var out = { problems: [], rounded: [], xml: null, name: null };
+    var out = { problems: [], rounded: [], dropped: [], drop: {}, xml: null, name: null };
     if (doc.fatal) { out.problems.push('The file could not be read, so there is nothing to write.'); return out; }
+    ((opts.result && opts.result.findings) || []).forEach(function (f) {
+      if (f.drop) out.drop[f.form + '|' + f.table + '|' + (f.item === undefined ? '' : f.item) + '|' + f.cell] = true;
+    });
     var header = [];
     spec.header.forEach(function (hd) {
       var rec = doc.header[hd[0]];

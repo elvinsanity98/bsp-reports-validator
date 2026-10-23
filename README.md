@@ -6,6 +6,7 @@ It reads the file on your own computer and reports what the BSP's validation wou
 | Report | Version | BSP name |
 | --- | --- | --- |
 | `AFRD` | 1.0 | AFRD Financing (Mandatory Agriculture, Fisheries and Rural Development Financing) |
+| `BCCR` | 1.0 (specification 1.0.1) | Banks' Consolidated Complaints Report |
 | `FRP_S` | 15.0 | Simplified FRP and FRP Related Reports |
 | `SBLAF` | 1.0 (specification 1.0.2) | Report on Business Loan Applications using SBLAF Templates |
 | `WRR_RCB` | 1.0 | Weekly Reserves Report for Rural and Cooperative Banks |
@@ -32,13 +33,17 @@ The tool recognises which report a file is, from the root element of the XML or 
    and only schedules, tables and cells it knows, no totals that the BSP calculates itself, and every value in the right format
    (amounts with at most 2 decimals and no commas, whole numbers, code lists, dates, text lengths). The BSP reports these as `XSD-0001`.
 2. **Conditional cells** (`COND-0001`): a value in a cell whose condition is false, for example a column the report does not use
-   or a line meant for another type of bank. The BSP rejects it with the same code.
-3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S, 150 for SBLAF, 64 for AFRD, 5 for WRR_RCB).
+   or a line meant for another type of bank. The BSP rejects it with the same code in an XML file. When the BSP portal reads
+   a filled-in template it leaves such a value out instead (seen in BCCR: "NONE" or 0 typed in a "Specify others" cell),
+   so for a template it is a warning, and **Export to XML** leaves it out too and lists what it left out.
+3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S, 150 for SBLAF, 64 for AFRD, 57 for BCCR, 5 for WRR_RCB).
    - `REQ-` schedules that must, or must not, be submitted for the period and bank type
    - `STG1-` checks on single cells and groups of cells
    - `RIN-` reconciliations inside a schedule and between schedules, each with its tolerance
    - `XREQ-` branch coverage in the BRIS schedules
-4. **Sanity checks of this tool** (`CHECK-`): not BSP rules, always warnings. At present: a weekly report whose dates do not run Friday to Thursday.
+4. **Sanity checks of this tool** (`CHECK-`): not BSP rules, always warnings. At present: a weekly report whose dates do not run Friday to Thursday,
+   and a branch-code cell holding an office's name. The portal turns a name into the branch code when it reads a template (BCCR's
+   "Branch of Account"); this tool cannot, so the XML it writes would carry the name.
 
 Before the rules run, the tool works out the totals the BSP calculates (the grey cells of the template), because most rules compare those totals.
 The **Schedules** tab shows every schedule the way the BSP will see it: your figures plus those totals.
@@ -253,6 +258,19 @@ The tool was compared with the BSP's own processing results for the past submiss
 - 1 rejected sandbox attempt whose file was not kept, so nothing could be compared.
 - Values read from three filled Excel templates equal the values in the XML filed for the same quarter (44 of 45 cells; the one difference was edited in between).
 
+**BCCR**, 12 processing results from September 2025 to July 2026:
+
+- 5 accepted submissions: the tool reports nothing on the files sent.
+- 6 rejected sandbox attempts whose files were kept. On five, the tool reports the same failed rules as the BSP, with the same values:
+  branches without an entry for each month of the quarter (`XREQ-...-BRANCH`, 1 against 3) and, once, `RIN-BCCR40`, `RIN-BCCR50`
+  and `RIN-BCCR60` (0 against 34). On the sixth the BSP named six incomplete entries (`XSD-0001`); the tool names the missing cells of the same entries.
+- 1 rejected attempt that sent the quarter 1 file as quarter 2 (`XML-0002`, a check of the portal against the period typed when sending).
+  The Send panel takes the period from the file, which avoids it.
+- 1 accepted sandbox attempt: the tool reports nothing.
+- Values read from the five filled templates of the accepted quarters equal the values in the XML filed (570 cells), once the portal's
+  two changes are made: the office's name becomes its branch code, and "Specify others" cells with nothing to specify are left out.
+- The bank's numbering in its BSP results ends some codes in `-2` (`XREQ-BCCR_PRODUCT-BRANCH-2`); specification 1.0.1 has them without it.
+
 **SBLAF**, 7 processing results from April 2025 to July 2026:
 
 - 6 accepted submissions: the tool reports nothing on any of them.
@@ -270,6 +288,9 @@ Rules that this bank's data never exercises are untested against the BSP.
 
 - **Conditional cells with a zero.** The BSP rejected non-zero values in conditional cells. Whether a reported `0` is also rejected is not known,
   because no past file had one; the tool reports a zero there as a warning.
+- **Tolerance on "greater than".** A rule `left > right` with a tolerance passes when left is within the tolerance of right, so
+  `LEN(name) > 0` with tolerance 0.1 passes for an empty name (BCCR's "Specify the other channels" rules). Whether the BSP applies
+  the tolerance the same way has not been seen in its results.
 - **Empty sheets in the Excel template.** A sheet with no values is treated as a schedule that was not submitted,
   and "required schedule not submitted" is then a warning rather than an error. The exception is a schedule the schema itself
   requires in every file (all of AFRD, and WRR): its sheet counts as filed even when nil, because the XML must carry it either way.

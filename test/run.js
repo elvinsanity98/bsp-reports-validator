@@ -13,7 +13,7 @@ const fx = require('./fixtures.js');
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
-let spec, wrr, afrd, sblaf;
+let spec, wrr, afrd, sblaf, bccr;
 
 const codes = (r) => r.findings.map((f) => f.code);
 const has = (r, code) => codes(r).includes(code);
@@ -374,7 +374,9 @@ const checkWrr = (xml, bank) => ENGINE.check(wrr, ENGINE.readXml(xml, wrr), { pr
 const week = (row, amount) => ({ [row + 'C0020']: amount, [row + 'C0050']: amount, [row + 'C0060']: amount, [row + 'C0070']: amount, [row + 'C0080']: amount });
 
 test('reports: each file says which report it is', () => {
-  assert.deepStrictEqual(SPEC.list().map((r) => r.report + ':' + r.periodStyle), ['AFRD:quarter', 'FRP_S:month', 'SBLAF:quarter', 'WRR_RCB:range']);
+  assert.deepStrictEqual(SPEC.list().map((r) => r.report + ':' + r.periodStyle), ['AFRD:quarter', 'BCCR:quarter', 'FRP_S:month', 'SBLAF:quarter', 'WRR_RCB:range']);
+  assert.strictEqual(SPEC.detectXmlText(sample('clean/BCCR_RB0001_2026-1.xml')), 'BCCR');
+  assert.strictEqual(SPEC.detectSheets(['BCCR_PRODUCT', 'BCCR_CHANNEL', 'dropdowns']), 'BCCR');
   assert.strictEqual(SPEC.detectXmlText(sample('clean/SBLAF_RB0001_2026-1.xml')), 'SBLAF');
   assert.strictEqual(SPEC.detectSheets(['SBLAF-Q', 'SBLAF-A']), 'SBLAF');
   assert.strictEqual(SPEC.detectXmlText(sample('clean/WRR_RCB_RB0001_2026-09-18.xml')), 'WRR_RCB');
@@ -627,6 +629,65 @@ test('SBLAF: quarter 4 holds the annual schedule, checked against the four quart
   assert.ok(r.findings.some((f) => f.code === 'REQ-SBLAF-A-2'));
 });
 
+// ---- BCCR ----------------------------------------------------------------------
+
+const bccrDoc = (name) => ENGINE.readXml(sample(name), bccr);
+
+test('BCCR: samples', () => {
+  let r = ENGINE.check(bccr, bccrDoc('clean/BCCR_RB0001_2026-1.xml'), {});
+  assert.deepStrictEqual(r.findings.map((f) => f.code + ' ' + f.msg), []);
+  assert.strictEqual(r.stats.passed, 30);
+  assert.strictEqual(r.stats.skippedTotal, 0, 'every formula is understood (LEN included)');
+  r = ENGINE.check(bccr, bccrDoc('with-errors/BCCR_RB0001_2026-3_errors.xml'), {});
+  assert.deepStrictEqual(r.findings.map((f) => f.code + (f.left !== undefined ? ' ' + f.left + '=' + f.right : '')), [
+    'XSD-REQUIRED', 'COND-0001', 'RIN-BCCR20-8 3=2', 'RIN-BCCR30-8 2=0', 'STG1-BCCR_STANDARD OF CONDUCT-MONTH-MAIN-C0010-3 false=true']);
+});
+
+test('BCCR: every office needs one entry for each month of the quarter', () => {
+  const doc = bccrDoc('clean/BCCR_RB0001_2026-1.xml');
+  doc.forms.BCCR_CHANNEL[0].tables.MAIN.items.pop();
+  const r = ENGINE.check(bccr, doc, {});
+  assert.deepStrictEqual([...new Set(r.findings.map((f) => f.code + ' ' + f.left + '=' + f.right))].sort(),
+    ['RIN-BCCR10-8 2=0', 'XREQ-BCCR_CHANNEL-BRANCH 2=3'], 'as the BSP reports a branch with fewer than three months');
+});
+
+test('BCCR: a template is read the way the portal reads it', async () => {
+  const book = await TEMPLATE.readWorkbook((await EXPORTER.toXlsx(bccr, bccrDoc('clean/BCCR_RB0001_2026-1.xml'))).bytes);
+  const cell = (sheetName, code, entry, value) => {
+    const sheet = book.sheets.find((s) => s.name === sheetName);
+    const codeRow = Object.keys(sheet.rows).map(Number).sort((a, b) => a - b).find((rn) => Object.values(sheet.rows[rn]).includes('C0010'));
+    const col = Number(Object.keys(sheet.rows[codeRow]).find((c) => sheet.rows[codeRow][c] === code));
+    sheet.rows[codeRow + 1 + entry][col] = value;
+  };
+  cell('BCCR_DEMOGRAPHICS', 'C0090', 0, 'NONE');       // a name for "others" that are not there
+  cell('BCCR_PRODUCT', 'C0010', 1, '2 [2]');           // a month picked from the dropdown
+  ['BCCR_PRODUCT', 'BCCR_CHANNEL'].forEach((s) => [0, 1, 2].forEach((i) => cell(s, 'C0030', i, 'SAMPLE RURAL BANK, INC.')));
+  const doc = TEMPLATE.readTemplate(book, bccr, TEMPLATE.readHeader(book, bccr));
+  assert.strictEqual(doc.forms.BCCR_PRODUCT[0].tables.MAIN.items[1].cells.C0010.v, '2');
+  const r = ENGINE.check(bccr, doc, {});
+  assert.deepStrictEqual(r.findings.map((f) => f.sev + ' ' + f.code + ' ' + (f.form || '')).filter((x) => !/RIN|XREQ/.test(x)),
+    ['warning CHECK-BRANCH BCCR_PRODUCT', 'warning CHECK-BRANCH BCCR_CHANNEL', 'warning COND-0001 BCCR_DEMOGRAPHICS']);
+  assert.ok(/portal turns the office's name into its code/.test(r.findings[0].msg) && /in 3 entries/.test(r.findings[0].msg));
+  assert.ok(/The BSP portal leaves it out when it reads the template/.test(r.findings.find((f) => f.code === 'COND-0001').msg));
+  // Export to XML leaves the value out, as the portal does, and says so
+  const out = EXPORTER.toXml(bccr, doc, { result: r });
+  assert.deepStrictEqual(out.dropped, ['BCCR_DEMOGRAPHICS / MAIN entry 1 / C0090 (' + doc.forms.BCCR_DEMOGRAPHICS[0].tables.MAIN.items[0].cells.C0090.loc + ') "NONE"']);
+  assert.ok(out.xml && !/<C0090>NONE/.test(out.xml));
+  assert.ok(/<C0090>NONE<\/C0090>/.test(EXPORTER.toXml(bccr, doc).xml), 'only with the check result');
+  // in an XML file the same value is an error, as the BSP rejects it
+  const x = ENGINE.check(bccr, ENGINE.readXml(EXPORTER.toXml(bccr, doc).xml, bccr), {});
+  assert.strictEqual(x.findings.find((f) => f.code === 'COND-0001').sev, 'error');
+});
+
+test('rules: messages do not repeat the rule code', () => {
+  for (const s of [spec, wrr, afrd, sblaf, bccr]) {
+    s.rules.forEach((r) => {
+      assert.ok(!/^[-.:\s]/.test(r[1]), r[0] + ': ' + r[1].slice(0, 40));
+      assert.ok(!r[1].replace(/[\s_-]/g, '-').toUpperCase().startsWith(r[0].replace(/[\s_-]/g, '-').toUpperCase()), r[0] + ': ' + r[1].slice(0, 60));
+    });
+  }
+});
+
 // ---- writing the XML from a template --------------------------------------------
 
 const flatCells = (doc) => {
@@ -853,6 +914,7 @@ test('index.html is the current build of src/', () => {
   wrr = await SPEC.load('WRR_RCB');
   afrd = await SPEC.load('AFRD');
   sblaf = await SPEC.load('SBLAF');
+  bccr = await SPEC.load('BCCR');
   let failed = 0;
   for (const [name, fn] of tests) {
     try {
