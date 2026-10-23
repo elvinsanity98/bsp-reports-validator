@@ -332,6 +332,9 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
 select.cell-in { text-align: left; font-family: var(--sans); font-weight: 600; min-width: 9rem; background: var(--surface); color: var(--ink); cursor: pointer; }
 select.cell-in option { background: var(--surface); color: var(--ink); }
 select.cell-in.cell-office { min-width: 20rem; }
+.officebox { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--accent-soft); font-size: .9rem; }
+.officebox .row { margin-top: 8px; align-items: flex-end; }
+.officebox .field-in { min-width: 7rem; }
 .cell-in:focus { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 0; background: var(--accent-soft); }
 .xbtn { margin-left: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-3); border-radius: 4px;
   font-size: .72rem; line-height: 1; padding: 2px 5px; cursor: pointer; }

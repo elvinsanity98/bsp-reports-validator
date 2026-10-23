@@ -340,6 +340,9 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
 select.cell-in { text-align: left; font-family: var(--sans); font-weight: 600; min-width: 9rem; background: var(--surface); color: var(--ink); cursor: pointer; }
 select.cell-in option { background: var(--surface); color: var(--ink); }
 select.cell-in.cell-office { min-width: 20rem; }
+.officebox { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--accent-soft); font-size: .9rem; }
+.officebox .row { margin-top: 8px; align-items: flex-end; }
+.officebox .field-in { min-width: 7rem; }
 .cell-in:focus { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 0; background: var(--accent-soft); }
 .xbtn { margin-left: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-3); border-radius: 4px;
   font-size: .72rem; line-height: 1; padding: 2px 5px; cursor: pointer; }
@@ -4304,6 +4307,60 @@ select.cell-in.cell-office { min-width: 20rem; }
     return list;
   }
 
+  // Branch cells: in the portal a dropdown that shows the office's name and
+  // writes its code. Asked for here, where the cells are, until both are known;
+  // Bank profile keeps them.
+  function officePanel(form) {
+    var p = profile();
+    if (!form.x || (p.branchCode !== undefined && p.officeName)) return null;
+    var first = null;
+    form.tb.forEach(function (t) {
+      Object.keys(t.c).forEach(function (c) { if (!first && t.x && t.c[c][0] === 0 && isBranchType(typeOfCell(t.c[c]))) first = [t, c]; });
+    });
+    if (!first) return null;
+    // the codes the file already holds in branch cells, to suggest one
+    var found = {};
+    Object.keys(state.doc.forms).forEach(function (fn) {
+      var f = state.spec.formByName[fn];
+      if (!f) return;
+      state.doc.forms[fn].forEach(function (inst) {
+        Object.keys(inst.tables).forEach(function (tn) {
+          var t = f.tableByName[tn], data = inst.tables[tn];
+          if (!t) return;
+          (data.items || [data]).forEach(function (b) {
+            Object.keys(b.cells).forEach(function (c) {
+              var d = t.c[c], rec = b.cells[c];
+              if (d && d[0] === 0 && isBranchType(typeOfCell(d)) && typeof rec.v === 'string' && rec.v !== '' && !/[A-Za-z]/.test(rec.v)) found[rec.v] = true;
+            });
+          });
+        });
+      });
+    });
+    var codes = Object.keys(found);
+    var code = h('input', { type: 'text', class: 'field-in', spellcheck: 'false', autocomplete: 'off', placeholder: 'e.g. 0' });
+    code.value = p.branchCode !== undefined ? p.branchCode : codes.length === 1 ? codes[0] : '';
+    var name = h('input', { type: 'text', class: 'field-in', spellcheck: 'false', autocomplete: 'off', placeholder: 'as the portal\'s dropdown shows it' });
+    name.value = p.officeName || '';
+    var use = function () {
+      if (!code.value.trim()) { code.focus(); return; }
+      if (!name.value.trim()) { name.focus(); return; }
+      $('p-branch-code').value = code.value.trim();
+      $('p-office-name').value = name.value.trim();
+      $('profile-summary').textContent = profileSummary();
+      saveSetup();
+      run();
+    };
+    name.addEventListener('keydown', function (e) { if (e.key === 'Enter') use(); });
+    return h('div', { class: 'officebox' },
+      h('p', null, h('strong', null, (SPEC.cellLabel(first[0], first[1]) || 'Branch') + '. '),
+        'In the portal this cell is a dropdown that shows your office\'s name and writes its code. Enter both once: the cells then show the name, ',
+        'offer it in a dropdown under Edit values, and the XML and Excel files keep the code. Kept under Bank profile.'),
+      h('div', { class: 'row' },
+        h('label', { class: 'field' }, 'Branch code', code),
+        h('label', { class: 'field grow' }, 'Office name', name),
+        h('button', { class: 'btn small primary', type: 'button', onclick: use }, 'Use')));
+  }
+
   function valueCell(ev, form, table, code, item, hits) {
     var def = table.c[code];
     if (!def) return h('td', { class: 'none', title: 'Not a cell of this table' });
@@ -4428,6 +4485,8 @@ select.cell-in.cell-office { min-width: 20rem; }
       }
       view.appendChild(hbox);
     }
+    var officeBox = officePanel(form);
+    if (officeBox) view.appendChild(officeBox);
     var fieldList = (form.z ? [[form.z.f, form.z.ty, form.z.t]] : []).concat(form.f || []);
     if (canEdit(form) && fieldList.length) {
       var fbox = h('div', { class: 'row edit-fields' });

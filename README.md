@@ -70,6 +70,7 @@ Some rules depend on facts the BSP holds about the bank. Set them under **Bank p
   writes the code. The XML the portal saved for an earlier period shows the code. With the office name entered too, the
   Schedules tab shows the name in those cells and, under Edit values, offers it in a dropdown as the portal does; the file
   still holds the code, so Export to XML and Export to Excel write `0`. Month cells get a dropdown of the months the same way.
+  Until both are entered, a schedule with branch cells asks for them above its table, with the code the file holds filled in.
 
 A rule or conditional cell that needs a fact left blank is counted as **not checked**. It never produces a finding.
 
