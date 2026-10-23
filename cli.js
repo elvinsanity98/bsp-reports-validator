@@ -12,6 +12,8 @@
 //   --trust  --emi          has trust authority / is an e-money issuer
 //   --foreign               branch of a foreign bank
 //   --branches FILE         CSV: branch code, region code, location code (1 NCR, 2 Luzon, 3 Visayas, 4 Mindanao, 5 foreign)
+//   --branch-code CODE      Excel template: the code the portal's branch dropdown writes for the bank's office;
+//                           a branch cell holding a name or "null" is read as that code (BCCR, BRIS)
 // Excel template only (an XML file carries its own header):
 //   --code BANKCODE             bank code (Undertaking)
 //   --year YYYY --month M       reports filed by month (FRP_S) or by quarter (AFRD: --month is the quarter, 1 to 4)
@@ -39,7 +41,7 @@ const TEMPLATE = require('./src/template.js');
 const EXPORTER = require('./src/export.js');
 
 let lastProfile = null;
-const VALUE_FLAGS = ['--bank', '--parent', '--offices', '--subsidiaries', '--branches', '--code', '--year', '--month', '--from', '--to', '--report', '--prior', '--csv'];
+const VALUE_FLAGS = ['--bank', '--parent', '--offices', '--subsidiaries', '--branches', '--branch-code', '--code', '--year', '--month', '--from', '--to', '--report', '--prior', '--csv'];
 
 function parseArgs(argv) {
   const o = { prior: [], files: [] };
@@ -75,7 +77,7 @@ async function readDoc(file, o, report) {
     const spec = await pick(SPEC.detectSheets(book.sheets.map((s) => s.name)));
     const header = TEMPLATE.readHeader(book, spec);
     Object.keys(flags).forEach((k) => { if (flags[k] !== undefined) header[k] = flags[k]; });
-    return { spec, doc: TEMPLATE.readTemplate(book, spec, header) };
+    return { spec, doc: TEMPLATE.readTemplate(book, spec, header, { branchCode: o['branch-code'] }) };
   }
   if (/\.zip$/i.test(file)) {
     const zip = TEMPLATE.unzip(bytes);
@@ -143,6 +145,7 @@ async function main() {
   console.log(`Rules     ${st.rules} in the specification: ${st.passed} passed, ${st.failed} failed, ${st.notApplicable} not applicable, ${st.skippedTotal} not checked`);
   Object.keys(st.skippedWhy).forEach((why) => console.log(`            not checked (${why}): ${st.skippedWhy[why]}`));
   Object.keys(st.cellsNotCheckedWhy).forEach((why) => console.log(`Cells     ${st.cellsNotCheckedWhy[why]} conditional cell(s) not checked (${why})`));
+  (doc.notes || []).forEach((n) => console.log(`Note      ${n}`));
   console.log(`Result    ${r.counts.error} error(s), ${r.counts.warning} warning(s)`);
 
   const list = o.all ? r.findings : r.findings.slice(0, 40);

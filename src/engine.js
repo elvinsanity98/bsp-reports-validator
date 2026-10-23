@@ -1141,9 +1141,10 @@
     if (days !== 6) warn('ToDate', 'FromDate to ToDate covers ' + (days + 1) + ' day(s). The report week is the 7 days from Friday to Thursday.');
   }
 
-  // A branch-code cell holding an office's name ("RURAL BANK OF ...") instead
-  // of its code. The portal turns the name into the code when it reads a
-  // template (BCCR); this tool cannot, so it says so, once per table.
+  // A branch-code cell holding an office's name ("RURAL BANK OF ...") or "null"
+  // instead of its code. In the portal the cell is a dropdown of the bank's
+  // offices that writes the office's code (BCCR, BRIS); said once per table.
+  // A template read with the office's code set (Bank profile) has none left.
   function branchNames(spec, doc, findings) {
     Object.keys(doc.forms).forEach(function (name) {
       var form = spec.formByName[name];
@@ -1158,7 +1159,7 @@
             Object.keys(b.cells).forEach(function (code) {
               var def = t.c[code], rec = b.cells[code];
               if (!def || def[0] !== 0 || !/^Ptype_branch_code/.test(cellType(spec, def).n)) return;
-              if (typeof rec.v !== 'string' || !/[A-Za-z]{2,}/.test(rec.v) || !/\s/.test(rec.v.trim())) return;
+              if (typeof rec.v !== 'string' || !/[A-Za-z]/.test(rec.v)) return;
               (hits[code] = hits[code] || []).push({ item: b.item, rec: rec });
             });
           });
@@ -1167,11 +1168,12 @@
             findings.push({
               sev: 'warning', code: 'CHECK-BRANCH', kind: 'file', form: name, table: tn, cell: code, item: h[0].item,
               line: h[0].rec.line, loc: h[0].rec.loc,
-              msg: name + ' / ' + tn + ': ' + label + ' holds a name, "' + h[0].rec.v.slice(0, 60) + '"' +
-                (h.length > 1 ? ', in ' + h.length + ' entries' : '') + ', not a branch code. ' +
+              msg: name + ' / ' + tn + ': ' + label + ' holds "' + h[0].rec.v.slice(0, 60) + '"' +
+                (h.length > 1 ? ' in ' + h.length + ' entries' : '') + ', not a branch code. ' +
                 (doc.source === 'xlsx'
-                  ? 'The BSP portal turns the office\'s name into its code when it reads the template; this tool cannot, so Export to XML would write the name. Type the code instead, as in the XML the portal saved for an earlier period.'
-                  : 'Write the branch code the BSP has for the office.')
+                  ? 'In the portal this cell is a dropdown of the bank\'s offices that writes the office\'s code (an XML the portal saved for an earlier period shows it). ' +
+                    'Enter that code under Bank profile, "Branch code of your office" (--branch-code on the command line), and the tool writes it the same way.'
+                  : 'Write the branch code of the office, as the portal\'s branch dropdown does.')
             });
           });
         });

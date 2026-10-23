@@ -78,6 +78,11 @@
           <label class="check" data-need="A_TRUST"><input type="checkbox" id="p-trust"><span>Has trust authority <small>files the FRPTI schedules</small></span></label>
           <label class="check" data-need="A_EMI"><input type="checkbox" id="p-emi"><span>E-money issuer <small>files the EMONEY schedules</small></span></label>
         </div>
+        <div class="row" data-need="@branchcode">
+          <label class="field">Branch code of your office <small>what the portal's branch dropdown writes for it; see a past XML</small>
+            <input type="text" id="p-branch-code" placeholder="not set" spellcheck="false" autocomplete="off">
+          </label>
+        </div>
         <label class="field wide" data-need="@branches">Branch list for the BRIS regional checks <small>optional; one office per line: branch code, region code, location code</small>
           <textarea id="p-branch-list" rows="3" spellcheck="false" placeholder="001, 9, 4&#10;002, 9, 4"></textarea>
         </label>

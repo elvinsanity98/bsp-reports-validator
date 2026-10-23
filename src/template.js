@@ -168,8 +168,13 @@
     return text;
   }
 
-  function readTemplate(book, spec, header) {
-    var doc = { source: 'xlsx', header: {}, forms: {}, findings: [], sheets: [] };
+  // opts.branchCode: the code the portal's branch dropdown writes for the bank's
+  // office. A branch cell holding a name or "null" (how the dropdown shows in
+  // Excel) is read as that code, as the portal does.
+  function readTemplate(book, spec, header, opts) {
+    opts = opts || {};
+    var doc = { source: 'xlsx', header: {}, forms: {}, findings: [], sheets: [], notes: [] };
+    var branchNames = {};
     function add(sev, code, msg, loc, extra) {
       var f = { sev: sev, code: code, kind: 'file', msg: msg, loc: loc };
       if (extra) Object.keys(extra).forEach(function (k) { f[k] = extra[k]; });
@@ -220,6 +225,10 @@
           return { raw: cellValue.error, v: null, bad: true, loc: loc };
         }
         var raw = toRaw(cellValue, type);
+        if (opts.branchCode !== undefined && opts.branchCode !== '' && /^Ptype_branch_code/.test(type.n) && /[A-Za-z]/.test(raw)) {
+          (branchNames[raw] = branchNames[raw] || []).push(loc);
+          raw = String(opts.branchCode);
+        }
         var r = ENGINE.checkValue(type, raw);
         if (r.err) {
           add('error', 'XSD-TYPE', where + ' (' + loc + '): "' + raw.slice(0, 60) + '" ' + r.err + '.', loc, at);
@@ -376,6 +385,12 @@
       if (filled || form.r || nil[form.n]) doc.forms[form.n] = [inst];
     });
 
+    Object.keys(branchNames).forEach(function (name) {
+      var at = branchNames[name];
+      doc.notes.push('Branch cells holding "' + name.slice(0, 60) + '" (' + at.length + (at.length === 1 ? ' cell, ' : ' cells, from ') + at[0] +
+        ') are read as branch code ' + opts.branchCode + ', as the portal\'s branch dropdown writes them.');
+    });
+
     if (!matched) {
       var names = spec.forms.filter(function (f) { return f.x; }).map(function (f) { return f.n; });
       add('error', 'TPL-NO-SHEETS', 'No sheet of this workbook is named after a ' + spec.report + ' schedule (' +
@@ -393,8 +408,8 @@
     return doc;
   }
 
-  function read(bytes, spec, header) {
-    return readWorkbook(bytes).then(function (book) { return readTemplate(book, spec, header); });
+  function read(bytes, spec, header, opts) {
+    return readWorkbook(bytes).then(function (book) { return readTemplate(book, spec, header, opts); });
   }
 
   // The bank code and period kept in a sheet named Header (column A the field,

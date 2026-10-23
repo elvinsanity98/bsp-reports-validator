@@ -42,8 +42,7 @@ The tool recognises which report a file is, from the root element of the XML or 
    - `RIN-` reconciliations inside a schedule and between schedules, each with its tolerance
    - `XREQ-` branch coverage in the BRIS schedules
 4. **Sanity checks of this tool** (`CHECK-`): not BSP rules, always warnings. At present: a weekly report whose dates do not run Friday to Thursday,
-   and a branch-code cell holding an office's name. The portal turns a name into the branch code when it reads a template (BCCR's
-   "Branch of Account"); this tool cannot, so the XML it writes would carry the name.
+   and a branch-code cell holding an office's name or "null" (see "Branch code of your office" below).
 
 Before the rules run, the tool works out the totals the BSP calculates (the grey cells of the template), because most rules compare those totals.
 The **Schedules** tab shows every schedule the way the BSP will see it: your figures plus those totals.
@@ -65,6 +64,10 @@ Some rules depend on facts the BSP holds about the bank. Set them under **Bank p
 - Number of banking offices (used by "all branches need to be reported")
 - Number of bank subsidiaries that report with the bank (AFRD: decides whether schedule AFRD_D may be sent)
 - Branch list, one office per line: `branch code, region code, location code` (used by the BRIS regional totals)
+- Branch code of your office (BCCR, and the BRIS schedules of FRP_S). In the portal a branch cell is a dropdown of the bank's
+  offices: it shows the office's name and writes its code (`0` for this bank's head office). In the Excel template the same cell
+  holds the name, or "null". With the code entered here, a workbook is read the way the portal reads it, and Export to XML
+  writes the code. The XML the portal saved for an earlier period shows the code.
 
 A rule or conditional cell that needs a fact left blank is counted as **not checked**. It never produces a finding.
 
@@ -88,6 +91,7 @@ node cli.js <file.xml | file.zip | template.xlsx> [options]
   --trust  --emi           has trust authority / is an e-money issuer
   --foreign                branch of a foreign bank
   --branches FILE          CSV of: branch code, region code, location code
+  --branch-code CODE       Excel template: the code the portal's branch dropdown writes for your office
   --code X                 bank code, for the Excel template only
   --year Y --month M       period of a monthly report, for the Excel template only (AFRD: --month is the quarter, 1 to 4)
   --from DATE --to DATE    period of a weekly report, for the Excel template only (YYYY-MM-DD)

@@ -57,7 +57,7 @@
     try {
       localStorage.setItem(SETUP_KEY, JSON.stringify({
         report: $('report').value, undertaking: saved.undertaking || '', group: $('p-group').value, parent: $('p-parent').value,
-        branches: $('p-branches').value, subsidiaries: $('p-subsidiaries').value, domestic: $('p-domestic').checked, trust: $('p-trust').checked,
+        branches: $('p-branches').value, subsidiaries: $('p-subsidiaries').value, branchCode: $('p-branch-code').value, domestic: $('p-domestic').checked, trust: $('p-trust').checked,
         emi: $('p-emi').checked, list: $('p-branch-list').value
       }));
     } catch (e) { /* private window: nothing to keep */ }
@@ -70,6 +70,7 @@
     $('p-parent').value = saved.parent || 'NONE';
     $('p-branches').value = saved.branches || '';
     $('p-subsidiaries').value = saved.subsidiaries || '';
+    $('p-branch-code').value = saved.branchCode || '';
     $('p-domestic').checked = saved.domestic !== false;
     $('p-trust').checked = !!saved.trust;
     $('p-emi').checked = !!saved.emi;
@@ -145,7 +146,7 @@
     renderHeaderFields();
     var needs = spec.needs, any = false;
     Array.prototype.forEach.call(document.querySelectorAll('[data-need]'), function (el) {
-      var on = el.getAttribute('data-need').split(' ').some(function (k) { return k === '@branches' ? needs.branches : needs.bank[k]; });
+      var on = el.getAttribute('data-need').split(' ').some(function (k) { return k === '@branches' ? needs.branches : k === '@branchcode' ? needs.branchCodes : needs.bank[k]; });
       el.hidden = !on;
       any = any || on;
     });
@@ -188,7 +189,7 @@
       branches = branches || {};
       branches[parts[0]] = { REGION: parts[1], BRISLOC: parts[2] || undefined };
     });
-    return { bank: bank, branches: branches, badLines: bad };
+    return { bank: bank, branches: branches, badLines: bad, branchCode: $('p-branch-code').value.trim() || undefined };
   }
 
   function profileSummary() {
@@ -201,6 +202,7 @@
     if (needs.bank.BRANCHCOUNT && b.BRANCHCOUNT !== undefined) bits.push(b.BRANCHCOUNT + ' offices');
     if (needs.bank.SUBSIDIARYCOUNT && b.SUBSIDIARYCOUNT !== undefined) bits.push(b.SUBSIDIARYCOUNT + ' subsidiaries');
     if (needs.branches && p.branches) bits.push(Object.keys(p.branches).length + ' in branch list');
+    if (needs.branchCodes && p.branchCode !== undefined) bits.push('office branch code ' + p.branchCode);
     return bits.join(', ') || 'no bank facts needed';
   }
 
@@ -231,7 +233,7 @@
       if (found && found !== state.spec.report) await useReport(found);
       // a workbook exported from here carries its bank code and period in a Header sheet
       if (input.fresh) applyHeader(TEMPLATE.readHeader(book, state.spec));
-      return TEMPLATE.readTemplate(book, state.spec, headerValues());
+      return TEMPLATE.readTemplate(book, state.spec, headerValues(), { branchCode: profile().branchCode });
     }
     if (kind === 'zip') {
       var zip = TEMPLATE.unzip(input.bytes);
@@ -454,6 +456,7 @@
       box.appendChild(h('p', { class: 'notice' }, h('strong', null, st.cellsNotChecked.toLocaleString('en-US') + ' conditional cell(s) were not checked: '),
         'whether they may hold a value depends on ' + Object.keys(st.cellsNotCheckedWhy).join(', ') + '. Set it under Bank profile.'));
     }
+    (doc.notes || []).forEach(function (n) { box.appendChild(h('p', { class: 'notice' }, n)); });
     if (r.profile.badLines) {
       box.appendChild(h('p', { class: 'notice' }, r.profile.badLines + ' line(s) of the branch list could not be read. Each line needs a branch code and a region code, separated by a comma.'));
     }
@@ -1113,7 +1116,7 @@
     await useReport(known ? saved.report : first.report);
 
     var rerun = function () { $('profile-summary').textContent = profileSummary(); saveSetup(); run(); };
-    ['p-group', 'p-parent', 'p-branches', 'p-subsidiaries', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
+    ['p-group', 'p-parent', 'p-branches', 'p-subsidiaries', 'p-branch-code', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
       $(id).addEventListener('change', rerun);
     });
     $('report').addEventListener('change', function () {

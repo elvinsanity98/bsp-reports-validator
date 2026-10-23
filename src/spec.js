@@ -109,7 +109,9 @@
     spec.rules.forEach(function (r) { scan(r[2]); scan(r[4]); scan(r[7] || ''); });
     spec.conds.forEach(scan);
     formulas.forEach(scan);
-    spec.needs = { bank: bank, branches: branches, history: history };
+    // cells the portal fills from its branch dropdown (BCCR's Branch of Account, BRIS)
+    var branchCodes = spec.types.some(function (t) { return /^Ptype_branch_code/.test(t.n); });
+    spec.needs = { bank: bank, branches: branches, history: history, branchCodes: branchCodes };
     return spec;
   }
 

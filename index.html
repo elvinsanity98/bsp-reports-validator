@@ -448,6 +448,11 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
           <label class="check" data-need="A_TRUST"><input type="checkbox" id="p-trust"><span>Has trust authority <small>files the FRPTI schedules</small></span></label>
           <label class="check" data-need="A_EMI"><input type="checkbox" id="p-emi"><span>E-money issuer <small>files the EMONEY schedules</small></span></label>
         </div>
+        <div class="row" data-need="@branchcode">
+          <label class="field">Branch code of your office <small>what the portal's branch dropdown writes for it; see a past XML</small>
+            <input type="text" id="p-branch-code" placeholder="not set" spellcheck="false" autocomplete="off">
+          </label>
+        </div>
         <label class="field wide" data-need="@branches">Branch list for the BRIS regional checks <small>optional; one office per line: branch code, region code, location code</small>
           <textarea id="p-branch-list" rows="3" spellcheck="false" placeholder="001, 9, 4&#10;002, 9, 4"></textarea>
         </label>
@@ -1095,7 +1100,9 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     spec.rules.forEach(function (r) { scan(r[2]); scan(r[4]); scan(r[7] || ''); });
     spec.conds.forEach(scan);
     formulas.forEach(scan);
-    spec.needs = { bank: bank, branches: branches, history: history };
+    // cells the portal fills from its branch dropdown (BCCR's Branch of Account, BRIS)
+    var branchCodes = spec.types.some(function (t) { return /^Ptype_branch_code/.test(t.n); });
+    spec.needs = { bank: bank, branches: branches, history: history, branchCodes: branchCodes };
     return spec;
   }
 
@@ -2284,9 +2291,10 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     if (days !== 6) warn('ToDate', 'FromDate to ToDate covers ' + (days + 1) + ' day(s). The report week is the 7 days from Friday to Thursday.');
   }
 
-  // A branch-code cell holding an office's name ("RURAL BANK OF ...") instead
-  // of its code. The portal turns the name into the code when it reads a
-  // template (BCCR); this tool cannot, so it says so, once per table.
+  // A branch-code cell holding an office's name ("RURAL BANK OF ...") or "null"
+  // instead of its code. In the portal the cell is a dropdown of the bank's
+  // offices that writes the office's code (BCCR, BRIS); said once per table.
+  // A template read with the office's code set (Bank profile) has none left.
   function branchNames(spec, doc, findings) {
     Object.keys(doc.forms).forEach(function (name) {
       var form = spec.formByName[name];
@@ -2301,7 +2309,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
             Object.keys(b.cells).forEach(function (code) {
               var def = t.c[code], rec = b.cells[code];
               if (!def || def[0] !== 0 || !/^Ptype_branch_code/.test(cellType(spec, def).n)) return;
-              if (typeof rec.v !== 'string' || !/[A-Za-z]{2,}/.test(rec.v) || !/\s/.test(rec.v.trim())) return;
+              if (typeof rec.v !== 'string' || !/[A-Za-z]/.test(rec.v)) return;
               (hits[code] = hits[code] || []).push({ item: b.item, rec: rec });
             });
           });
@@ -2310,11 +2318,12 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
             findings.push({
               sev: 'warning', code: 'CHECK-BRANCH', kind: 'file', form: name, table: tn, cell: code, item: h[0].item,
               line: h[0].rec.line, loc: h[0].rec.loc,
-              msg: name + ' / ' + tn + ': ' + label + ' holds a name, "' + h[0].rec.v.slice(0, 60) + '"' +
-                (h.length > 1 ? ', in ' + h.length + ' entries' : '') + ', not a branch code. ' +
+              msg: name + ' / ' + tn + ': ' + label + ' holds "' + h[0].rec.v.slice(0, 60) + '"' +
+                (h.length > 1 ? ' in ' + h.length + ' entries' : '') + ', not a branch code. ' +
                 (doc.source === 'xlsx'
-                  ? 'The BSP portal turns the office\'s name into its code when it reads the template; this tool cannot, so Export to XML would write the name. Type the code instead, as in the XML the portal saved for an earlier period.'
-                  : 'Write the branch code the BSP has for the office.')
+                  ? 'In the portal this cell is a dropdown of the bank\'s offices that writes the office\'s code (an XML the portal saved for an earlier period shows it). ' +
+                    'Enter that code under Bank profile, "Branch code of your office" (--branch-code on the command line), and the tool writes it the same way.'
+                  : 'Write the branch code of the office, as the portal\'s branch dropdown does.')
             });
           });
         });
@@ -2528,8 +2537,13 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     return text;
   }
 
-  function readTemplate(book, spec, header) {
-    var doc = { source: 'xlsx', header: {}, forms: {}, findings: [], sheets: [] };
+  // opts.branchCode: the code the portal's branch dropdown writes for the bank's
+  // office. A branch cell holding a name or "null" (how the dropdown shows in
+  // Excel) is read as that code, as the portal does.
+  function readTemplate(book, spec, header, opts) {
+    opts = opts || {};
+    var doc = { source: 'xlsx', header: {}, forms: {}, findings: [], sheets: [], notes: [] };
+    var branchNames = {};
     function add(sev, code, msg, loc, extra) {
       var f = { sev: sev, code: code, kind: 'file', msg: msg, loc: loc };
       if (extra) Object.keys(extra).forEach(function (k) { f[k] = extra[k]; });
@@ -2580,6 +2594,10 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
           return { raw: cellValue.error, v: null, bad: true, loc: loc };
         }
         var raw = toRaw(cellValue, type);
+        if (opts.branchCode !== undefined && opts.branchCode !== '' && /^Ptype_branch_code/.test(type.n) && /[A-Za-z]/.test(raw)) {
+          (branchNames[raw] = branchNames[raw] || []).push(loc);
+          raw = String(opts.branchCode);
+        }
         var r = ENGINE.checkValue(type, raw);
         if (r.err) {
           add('error', 'XSD-TYPE', where + ' (' + loc + '): "' + raw.slice(0, 60) + '" ' + r.err + '.', loc, at);
@@ -2736,6 +2754,12 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
       if (filled || form.r || nil[form.n]) doc.forms[form.n] = [inst];
     });
 
+    Object.keys(branchNames).forEach(function (name) {
+      var at = branchNames[name];
+      doc.notes.push('Branch cells holding "' + name.slice(0, 60) + '" (' + at.length + (at.length === 1 ? ' cell, ' : ' cells, from ') + at[0] +
+        ') are read as branch code ' + opts.branchCode + ', as the portal\'s branch dropdown writes them.');
+    });
+
     if (!matched) {
       var names = spec.forms.filter(function (f) { return f.x; }).map(function (f) { return f.n; });
       add('error', 'TPL-NO-SHEETS', 'No sheet of this workbook is named after a ' + spec.report + ' schedule (' +
@@ -2753,8 +2777,8 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     return doc;
   }
 
-  function read(bytes, spec, header) {
-    return readWorkbook(bytes).then(function (book) { return readTemplate(book, spec, header); });
+  function read(bytes, spec, header, opts) {
+    return readWorkbook(bytes).then(function (book) { return readTemplate(book, spec, header, opts); });
   }
 
   // The bank code and period kept in a sheet named Header (column A the field,
@@ -3459,7 +3483,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     try {
       localStorage.setItem(SETUP_KEY, JSON.stringify({
         report: $('report').value, undertaking: saved.undertaking || '', group: $('p-group').value, parent: $('p-parent').value,
-        branches: $('p-branches').value, subsidiaries: $('p-subsidiaries').value, domestic: $('p-domestic').checked, trust: $('p-trust').checked,
+        branches: $('p-branches').value, subsidiaries: $('p-subsidiaries').value, branchCode: $('p-branch-code').value, domestic: $('p-domestic').checked, trust: $('p-trust').checked,
         emi: $('p-emi').checked, list: $('p-branch-list').value
       }));
     } catch (e) { /* private window: nothing to keep */ }
@@ -3472,6 +3496,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     $('p-parent').value = saved.parent || 'NONE';
     $('p-branches').value = saved.branches || '';
     $('p-subsidiaries').value = saved.subsidiaries || '';
+    $('p-branch-code').value = saved.branchCode || '';
     $('p-domestic').checked = saved.domestic !== false;
     $('p-trust').checked = !!saved.trust;
     $('p-emi').checked = !!saved.emi;
@@ -3547,7 +3572,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     renderHeaderFields();
     var needs = spec.needs, any = false;
     Array.prototype.forEach.call(document.querySelectorAll('[data-need]'), function (el) {
-      var on = el.getAttribute('data-need').split(' ').some(function (k) { return k === '@branches' ? needs.branches : needs.bank[k]; });
+      var on = el.getAttribute('data-need').split(' ').some(function (k) { return k === '@branches' ? needs.branches : k === '@branchcode' ? needs.branchCodes : needs.bank[k]; });
       el.hidden = !on;
       any = any || on;
     });
@@ -3590,7 +3615,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
       branches = branches || {};
       branches[parts[0]] = { REGION: parts[1], BRISLOC: parts[2] || undefined };
     });
-    return { bank: bank, branches: branches, badLines: bad };
+    return { bank: bank, branches: branches, badLines: bad, branchCode: $('p-branch-code').value.trim() || undefined };
   }
 
   function profileSummary() {
@@ -3603,6 +3628,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     if (needs.bank.BRANCHCOUNT && b.BRANCHCOUNT !== undefined) bits.push(b.BRANCHCOUNT + ' offices');
     if (needs.bank.SUBSIDIARYCOUNT && b.SUBSIDIARYCOUNT !== undefined) bits.push(b.SUBSIDIARYCOUNT + ' subsidiaries');
     if (needs.branches && p.branches) bits.push(Object.keys(p.branches).length + ' in branch list');
+    if (needs.branchCodes && p.branchCode !== undefined) bits.push('office branch code ' + p.branchCode);
     return bits.join(', ') || 'no bank facts needed';
   }
 
@@ -3633,7 +3659,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
       if (found && found !== state.spec.report) await useReport(found);
       // a workbook exported from here carries its bank code and period in a Header sheet
       if (input.fresh) applyHeader(TEMPLATE.readHeader(book, state.spec));
-      return TEMPLATE.readTemplate(book, state.spec, headerValues());
+      return TEMPLATE.readTemplate(book, state.spec, headerValues(), { branchCode: profile().branchCode });
     }
     if (kind === 'zip') {
       var zip = TEMPLATE.unzip(input.bytes);
@@ -3856,6 +3882,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
       box.appendChild(h('p', { class: 'notice' }, h('strong', null, st.cellsNotChecked.toLocaleString('en-US') + ' conditional cell(s) were not checked: '),
         'whether they may hold a value depends on ' + Object.keys(st.cellsNotCheckedWhy).join(', ') + '. Set it under Bank profile.'));
     }
+    (doc.notes || []).forEach(function (n) { box.appendChild(h('p', { class: 'notice' }, n)); });
     if (r.profile.badLines) {
       box.appendChild(h('p', { class: 'notice' }, r.profile.badLines + ' line(s) of the branch list could not be read. Each line needs a branch code and a region code, separated by a comma.'));
     }
@@ -4515,7 +4542,7 @@ table.sheet { border-collapse: collapse; font-size: .84rem; }
     await useReport(known ? saved.report : first.report);
 
     var rerun = function () { $('profile-summary').textContent = profileSummary(); saveSetup(); run(); };
-    ['p-group', 'p-parent', 'p-branches', 'p-subsidiaries', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
+    ['p-group', 'p-parent', 'p-branches', 'p-subsidiaries', 'p-branch-code', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
       $(id).addEventListener('change', rerun);
     });
     $('report').addEventListener('change', function () {

@@ -387,7 +387,7 @@ test('reports: each file says which report it is', () => {
   assert.strictEqual(SPEC.detectSheets(['WRR']), 'WRR_RCB');
   assert.strictEqual(SPEC.detectSheets(['FRP_1', 'FRP_BS', 'dropdowns']), 'FRP_S');
   assert.strictEqual(SPEC.detectSheets(['Sheet1']), null);
-  assert.deepStrictEqual(wrr.needs, { bank: { BNKGRP: true }, branches: false, history: false });
+  assert.deepStrictEqual(wrr.needs, { bank: { BNKGRP: true }, branches: false, history: false, branchCodes: false });
   assert.ok(spec.needs.history && spec.needs.branches && spec.needs.bank.A_TRUST);
 });
 
@@ -667,7 +667,7 @@ test('BCCR: a template is read the way the portal reads it', async () => {
   const r = ENGINE.check(bccr, doc, {});
   assert.deepStrictEqual(r.findings.map((f) => f.sev + ' ' + f.code + ' ' + (f.form || '')).filter((x) => !/RIN|XREQ/.test(x)),
     ['warning CHECK-BRANCH BCCR_PRODUCT', 'warning CHECK-BRANCH BCCR_CHANNEL', 'warning COND-0001 BCCR_DEMOGRAPHICS']);
-  assert.ok(/portal turns the office's name into its code/.test(r.findings[0].msg) && /in 3 entries/.test(r.findings[0].msg));
+  assert.ok(/dropdown of the bank's offices/.test(r.findings[0].msg) && /in 3 entries/.test(r.findings[0].msg) && /Branch code of your office/.test(r.findings[0].msg));
   assert.ok(/The BSP portal leaves it out when it reads the template/.test(r.findings.find((f) => f.code === 'COND-0001').msg));
   // Export to XML leaves the value out, as the portal does, and says so
   const out = EXPORTER.toXml(bccr, doc, { result: r });
@@ -677,6 +677,26 @@ test('BCCR: a template is read the way the portal reads it', async () => {
   // in an XML file the same value is an error, as the BSP rejects it
   const x = ENGINE.check(bccr, ENGINE.readXml(EXPORTER.toXml(bccr, doc).xml, bccr), {});
   assert.strictEqual(x.findings.find((f) => f.code === 'COND-0001').sev, 'error');
+});
+
+test('BCCR: with the branch code of the office set, names and "null" are read as that code', async () => {
+  const book = await TEMPLATE.readWorkbook((await EXPORTER.toXlsx(bccr, bccrDoc('clean/BCCR_RB0001_2026-1.xml'))).bytes);
+  const sheet = book.sheets.find((s) => s.name === 'BCCR_PRODUCT');
+  const codeRow = Object.keys(sheet.rows).map(Number).sort((a, b) => a - b).find((rn) => Object.values(sheet.rows[rn]).includes('C0030'));
+  const col = Number(Object.keys(sheet.rows[codeRow]).find((c) => sheet.rows[codeRow][c] === 'C0030'));
+  sheet.rows[codeRow + 1][col] = 'SAMPLE RURAL BANK (SAMPLE TOWN) INC';     // as the portal's dropdown shows the office
+  sheet.rows[codeRow + 2][col] = 'null';                                   // as the dropdown shows in Excel
+  let doc = TEMPLATE.readTemplate(book, bccr, TEMPLATE.readHeader(book, bccr));
+  const warned = ENGINE.check(bccr, doc, {}).findings.filter((f) => f.code === 'CHECK-BRANCH');
+  assert.deepStrictEqual(warned.map((f) => f.form + ' ' + f.cell), ['BCCR_PRODUCT C0030'], 'a name and "null" both, once per table');
+  assert.ok(/holds "SAMPLE RURAL BANK \(SAMPLE TOWN\) INC" in 2 entries/.test(warned[0].msg), warned[0].msg);
+  doc = TEMPLATE.readTemplate(book, bccr, TEMPLATE.readHeader(book, bccr), { branchCode: '001' });
+  assert.deepStrictEqual(doc.forms.BCCR_PRODUCT[0].tables.MAIN.items.map((it) => it.cells.C0030.raw), ['001', '001', '001']);
+  assert.deepStrictEqual(ENGINE.check(bccr, doc, {}).findings, [], 'the same file as the portal makes');
+  assert.strictEqual(doc.notes.length, 2);
+  assert.ok(/"null" \(1 cell, BCCR_PRODUCT!\w+\) are read as branch code 001, as the portal's branch dropdown writes them/.test(doc.notes.join(' ')), doc.notes.join(' '));
+  // FRP_S branch schedules (BRIS) take the same setting
+  assert.ok(spec.needs.branchCodes && bccr.needs.branchCodes && !wrr.needs.branchCodes);
 });
 
 test('rules: messages do not repeat the rule code', () => {
