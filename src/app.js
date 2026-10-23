@@ -57,7 +57,7 @@
     try {
       localStorage.setItem(SETUP_KEY, JSON.stringify({
         report: $('report').value, undertaking: saved.undertaking || '', group: $('p-group').value, parent: $('p-parent').value,
-        branches: $('p-branches').value, subsidiaries: $('p-subsidiaries').value, branchCode: $('p-branch-code').value, domestic: $('p-domestic').checked, trust: $('p-trust').checked,
+        branches: $('p-branches').value, subsidiaries: $('p-subsidiaries').value, branchCode: $('p-branch-code').value, officeName: $('p-office-name').value, domestic: $('p-domestic').checked, trust: $('p-trust').checked,
         emi: $('p-emi').checked, list: $('p-branch-list').value
       }));
     } catch (e) { /* private window: nothing to keep */ }
@@ -71,6 +71,7 @@
     $('p-branches').value = saved.branches || '';
     $('p-subsidiaries').value = saved.subsidiaries || '';
     $('p-branch-code').value = saved.branchCode || '';
+    $('p-office-name').value = saved.officeName || '';
     $('p-domestic').checked = saved.domestic !== false;
     $('p-trust').checked = !!saved.trust;
     $('p-emi').checked = !!saved.emi;
@@ -189,7 +190,8 @@
       branches = branches || {};
       branches[parts[0]] = { REGION: parts[1], BRISLOC: parts[2] || undefined };
     });
-    return { bank: bank, branches: branches, badLines: bad, branchCode: $('p-branch-code').value.trim() || undefined };
+    return { bank: bank, branches: branches, badLines: bad, branchCode: $('p-branch-code').value.trim() || undefined,
+      officeName: $('p-office-name').value.trim() || undefined };
   }
 
   function profileSummary() {
@@ -202,7 +204,7 @@
     if (needs.bank.BRANCHCOUNT && b.BRANCHCOUNT !== undefined) bits.push(b.BRANCHCOUNT + ' offices');
     if (needs.bank.SUBSIDIARYCOUNT && b.SUBSIDIARYCOUNT !== undefined) bits.push(b.SUBSIDIARYCOUNT + ' subsidiaries');
     if (needs.branches && p.branches) bits.push(Object.keys(p.branches).length + ' in branch list');
-    if (needs.branchCodes && p.branchCode !== undefined) bits.push('office branch code ' + p.branchCode);
+    if (needs.branchCodes && p.branchCode !== undefined) bits.push((p.officeName || 'office') + ' = branch code ' + p.branchCode);
     return bits.join(', ') || 'no bank facts needed';
   }
 
@@ -846,19 +848,48 @@
     return hits;
   }
 
+  function typeOfCell(def) { return state.spec.types[Array.isArray(def[1]) ? def[1][0] : def[1]]; }
+  function isBranchType(type) { return /^Ptype_branch_code/.test(type.n); }
+
+  // The office's name for a branch code, as the portal's dropdown shows it (Bank profile).
+  function officeName(code) {
+    var p = profile();
+    return p.branchCode !== undefined && p.officeName && String(code) === p.branchCode ? p.officeName : null;
+  }
+
+  // The choices of a dropdown cell, as in the portal: a code list (the month), or
+  // the bank's offices for a branch cell. Each choice stores the code.
+  function choices(type, current) {
+    var list = [{ v: '', t: '' }];
+    if (type.enum) {
+      type.enum.forEach(function (e) { list.push({ v: String(e[0]), t: e[1] && String(e[1]) !== String(e[0]) ? e[1] + ' [' + e[0] + ']' : String(e[0]) }); });
+    } else {
+      var p = profile();
+      list.push({ v: p.branchCode, t: p.officeName || 'Your office [' + p.branchCode + ']' });
+      Object.keys(p.branches || {}).forEach(function (c) { if (c !== p.branchCode) list.push({ v: c, t: 'Branch ' + c }); });
+    }
+    if (current && !list.some(function (o) { return o.v === current; })) list.push({ v: current, t: current + ' (as in the file)' });
+    return list;
+  }
+
   function valueCell(ev, form, table, code, item, hits) {
     var def = table.c[code];
     if (!def) return h('td', { class: 'none', title: 'Not a cell of this table' });
     var td = h('td', { 'data-t': table.n, 'data-c': code, 'data-i': item === undefined ? '' : String(item) });
     if (def[0] === 0 && canEdit(form, table)) {
-      var rec = recordOf(form, table, code, item);
-      var input = h('input', {
-        type: 'text', class: 'cell-in', spellcheck: 'false', autocomplete: 'off',
-        'aria-label': form.n + ' ' + table.n + ' ' + code + (item === undefined ? '' : ' entry ' + (item + 1))
-      });
-      input.value = inputText(rec);
+      var rec = recordOf(form, table, code, item), type = typeOfCell(def);
+      var label = form.n + ' ' + table.n + ' ' + code + (item === undefined ? '' : ' entry ' + (item + 1));
+      var input;
+      if (type.enum || (isBranchType(type) && profile().branchCode !== undefined)) {
+        input = h('select', { class: 'cell-in cell-sel' + (type.enum ? '' : ' cell-office'), 'aria-label': label });
+        choices(type, rec ? String(rec.raw) : '').forEach(function (o) { input.appendChild(h('option', { value: o.v }, o.t)); });
+        input.value = rec ? String(rec.raw) : '';
+      } else {
+        input = h('input', { type: 'text', class: 'cell-in', spellcheck: 'false', autocomplete: 'off', 'aria-label': label });
+        input.value = inputText(rec);
+        input.addEventListener('keydown', nextDown);
+      }
       input.addEventListener('change', function () { editCell(form, table, code, item, input); });
-      input.addEventListener('keydown', nextDown);
       td.appendChild(input);
     }
     paintCell(td, ev, form, table, code, item, hits);
@@ -872,18 +903,25 @@
     var title = def[0] === 1 ? 'BSP total = ' + def[1] : def[0] === 2 ? 'Fixed by the BSP' : code;
     var hit = hits[table.n + '|' + code + '|' + (item === undefined ? '' : item)];
     if (hit) cls += ' hit-' + hit;
-    var input = td.firstChild && td.firstChild.tagName === 'INPUT' ? td.firstChild : null;
+    var input = td.firstChild && /^(INPUT|SELECT)$/.test(td.firstChild.tagName) ? td.firstChild : null;
     if (input) {
       var rec = recordOf(form, table, code, item);
       var type = ENGINE.isUnknown(v) || typeof v !== 'string' ? '' : ' txt';
       td.className = cls + ' edit' + type + (rec && rec.bad ? ' bad' : '');
-      td.title = rec && rec.bad ? 'Not in the right format; see the findings' : code;
+      td.title = rec && rec.bad ? 'Not in the right format; see the findings' : input.tagName === 'SELECT' && rec ? code + ' = ' + rec.raw : code;
       return;
     }
     clear(td);
     if (ENGINE.isUnknown(v)) { td.className = cls + ' unknown'; td.title = 'Not known: ' + v.why; td.textContent = '?'; return; }
     td.title = title;
-    if (typeof v === 'string') { td.className = cls + ' txt'; td.textContent = v; return; }
+    if (typeof v === 'string') {
+      // a branch code shows as the office's name, as in the portal; the file keeps the code
+      var office = def[0] === 0 && isBranchType(typeOfCell(def)) ? officeName(v) : null;
+      td.className = cls + ' txt';
+      td.textContent = office || v;
+      if (office) td.title = code + ': branch code ' + v + ' (written as ' + v + ' in the XML and in Excel)';
+      return;
+    }
     if (v === null) { td.className = cls; return; }
     td.className = cls + (v === 0 ? ' zero' : '');
     // a copy of the header's year is a year, not an amount
@@ -1116,7 +1154,7 @@
     await useReport(known ? saved.report : first.report);
 
     var rerun = function () { $('profile-summary').textContent = profileSummary(); saveSetup(); run(); };
-    ['p-group', 'p-parent', 'p-branches', 'p-subsidiaries', 'p-branch-code', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
+    ['p-group', 'p-parent', 'p-branches', 'p-subsidiaries', 'p-branch-code', 'p-office-name', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {
       $(id).addEventListener('change', rerun);
     });
     $('report').addEventListener('change', function () {

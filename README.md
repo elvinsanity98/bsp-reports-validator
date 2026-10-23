@@ -67,7 +67,9 @@ Some rules depend on facts the BSP holds about the bank. Set them under **Bank p
 - Branch code of your office (BCCR, and the BRIS schedules of FRP_S). In the portal a branch cell is a dropdown of the bank's
   offices: it shows the office's name and writes its code (`0` for this bank's head office). In the Excel template the same cell
   holds the name, or "null". With the code entered here, a workbook is read the way the portal reads it, and Export to XML
-  writes the code. The XML the portal saved for an earlier period shows the code.
+  writes the code. The XML the portal saved for an earlier period shows the code. With the office name entered too, the
+  Schedules tab shows the name in those cells and, under Edit values, offers it in a dropdown as the portal does; the file
+  still holds the code, so Export to XML and Export to Excel write `0`. Month cells get a dropdown of the months the same way.
 
 A rule or conditional cell that needs a fact left blank is counted as **not checked**. It never produces a finding.
 
