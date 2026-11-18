@@ -375,8 +375,8 @@ const week = (row, amount) => ({ [row + 'C0020']: amount, [row + 'C0050']: amoun
 
 test('reports: each file says which report it is', () => {
   assert.deepStrictEqual(SPEC.list().map((r) => r.id + ':' + r.report + ' ' + r.version + ':' + r.periodStyle),
-    ['AFRD:AFRD 1.0:quarter', 'BCCR:BCCR 1.0:quarter', 'FRP_S:FRP_S 15.0:month', 'FRP_S_16:FRP_S 16.0:month', 'SBLAF:SBLAF 1.0:quarter',
-      'SRR:SRR 2.0:month', 'WRR_RCB:WRR_RCB 1.0:range']);
+    ['AFRD:AFRD 1.0:quarter', 'BCCR:BCCR 1.0:quarter', 'FRP_S:FRP_S 15.0:month', 'FRP_S_16:FRP_S 16.0:month', 'PPBS:PPBS 2.0:quarter',
+      'SBLAF:SBLAF 1.0:quarter', 'SRR:SRR 2.0:month', 'WRR_RCB:WRR_RCB 1.0:range']);
   assert.strictEqual(SPEC.detectXmlText(sample('clean/BCCR_RB0001_2026-1.xml')), 'BCCR');
   assert.strictEqual(SPEC.detectSheets(['BCCR_PRODUCT', 'BCCR_CHANNEL', 'dropdowns']), 'BCCR');
   assert.strictEqual(SPEC.detectXmlText(sample('clean/SBLAF_RB0001_2026-1.xml')), 'SBLAF');
@@ -708,6 +708,66 @@ test('rules: messages do not repeat the rule code', () => {
       assert.ok(!r[1].replace(/[\s_-]/g, '-').toUpperCase().startsWith(r[0].replace(/[\s_-]/g, '-').toUpperCase()), r[0] + ': ' + r[1].slice(0, 60));
     });
   }
+});
+
+// ---- PPBS ----------------------------------------------------------------------
+
+test('PPBS: cells straight inside the form, read and written back that way', async () => {
+  const pp = await SPEC.load('PPBS');
+  assert.strictEqual(pp.title, 'Published Balance Sheet (PBS) (Proof of Publication/Posting)');
+  assert.strictEqual(pp.formByName.PPBS.flat.n, 'PPBS_MAIN', 'the table the rules name, with no element of its own');
+  assert.ok(!pp.formByName.PPBS.f, 'its cells are not taken for fields of the form');
+  const text = sample('clean/PPBS_RB0001_2026-1.xml');
+  assert.strictEqual(SPEC.detectXmlText(text), 'PPBS');
+  assert.ok(!/PPBS_MAIN/.test(text));
+  const doc = ENGINE.readXml(text, pp);
+  assert.strictEqual(doc.forms.PPBS[0].tables.PPBS_MAIN.cells.R0010C0010.v, '2026-04-24');
+  let r = ENGINE.check(pp, doc, { profile: fx.RB });
+  assert.deepStrictEqual(r.findings, []);
+  assert.deepStrictEqual([r.stats.passed, r.stats.notApplicable, r.stats.skippedTotal], [3, 1, 0], 'every rule runs; the UKB/DB one does not apply to a rural bank');
+  // written back: the same cells, still with no table element
+  const out = EXPORTER.toXml(pp, doc, { result: r });
+  assert.ok(/<PPBS>\r\n\t\t<R0010C0010>2026-04-24<\/R0010C0010>/.test(out.xml), out.xml);
+  assert.ok(!/PPBS_MAIN/.test(out.xml));
+  assert.strictEqual(out.name.slice(0, 12), 'PPBS_2026_1_');
+  // and through the workbook
+  const book = await TEMPLATE.readWorkbook((await EXPORTER.toXlsx(pp, doc)).bytes);
+  assert.strictEqual(await TEMPLATE.detect(book), 'PPBS');
+  const back = TEMPLATE.readTemplate(book, pp, TEMPLATE.readHeader(book, pp));
+  assert.deepStrictEqual(ENGINE.check(pp, back, { profile: fx.RB }).findings, []);
+  assert.strictEqual(EXPORTER.toXml(pp, back, {}).xml, out.xml);
+  // a missing cell is reported for the table the BSP names
+  const none = ENGINE.check(pp, ENGINE.readXml(text.replace(/<R0030C0010>.*<\/R0030C0010>/, ''), pp), { profile: fx.RB });
+  assert.deepStrictEqual(none.findings.map((f) => f.code + ' ' + f.table + ' ' + (f.cells || []).join()), ['XSD-REQUIRED PPBS_MAIN R0030C0010']);
+});
+
+test('PPBS: the publication date against the end of the quarter (TIMESTAMP, LASTDATE)', async () => {
+  const pp = await SPEC.load('PPBS');
+  let r = ENGINE.check(pp, ENGINE.readXml(sample('with-errors/PPBS_RB0001_2026-2_errors.xml'), pp), { profile: fx.RB });
+  assert.deepStrictEqual(r.findings.map((f) => f.code + ' ' + f.left + ' ' + f.op + ' ' + f.right), [
+    'STG1-PPBS_R0010 2026-06-15 > 2026-06-30', 'STG1-PPBS_R0050 true = false']);
+  assert.ok(!r.findings.some((f) => /^STG1-/.test(f.msg)), 'messages without their code in front');
+  const on = (date, year, period, cells) => ENGINE.check(pp, ENGINE.readXml(fx.buildXml(pp, { year, period, forms: { PPBS: Object.assign({ '@R0010C0010': date, '@R0020C0010': '1', '@R0030C0010': '2' }, cells || {}) } }), pp), { profile: fx.RB });
+  assert.ok(on('2025-12-31', 2025, 4).findings.some((f) => f.code === 'STG1-PPBS_R0010'), 'the last day of the quarter is not after it');
+  assert.deepStrictEqual(on('2026-01-01', 2025, 4).findings, []);
+  assert.deepStrictEqual(on('2026-04-01', 2026, 1).findings, []);
+  // nothing published or posted
+  r = on('2026-04-01', 2026, 1, { '@R0030C0010': '1' });
+  assert.deepStrictEqual(r.findings.map((f) => f.code), ['STG1-PPBS_R0020_R0030_R0040']);
+  r = on('2026-04-01', 2026, 1, { '@R0030C0010': '1', '@R0040C0010': 'https://example.com/pbs' });
+  assert.deepStrictEqual(r.findings, []);
+  // universal and commercial banks must name a newspaper or a website
+  const ukb = ENGINE.check(pp, ENGINE.readXml(sample('clean/PPBS_RB0001_2026-1.xml'), pp), { profile: { bank: { BNKGRP: 'UKB', PARENTBNKGRP: 'NONE' } } });
+  assert.deepStrictEqual(ukb.findings.map((f) => f.code), ['STG1-PPBS_R0020_R0040']);
+});
+
+test('PPBS: editing a cell of the table with no element of its own', async () => {
+  const pp = await SPEC.load('PPBS');
+  const doc = ENGINE.readXml(sample('with-errors/PPBS_RB0001_2026-2_errors.xml'), pp);
+  assert.strictEqual(EDIT.setValue(pp, doc, { form: 'PPBS', table: 'PPBS_MAIN', cell: 'R0010C0010' }, '2026-07-20'), null);
+  assert.strictEqual(EDIT.setValue(pp, doc, { form: 'PPBS', table: 'PPBS_MAIN', cell: 'R0050C0010' }, 'Zamboanga Star'), null);
+  assert.deepStrictEqual(ENGINE.check(pp, doc, { profile: fx.RB }).findings, []);
+  assert.ok(/\t\t<R0050C0010>Zamboanga Star<\/R0050C0010>/.test(EXPORTER.toXml(pp, doc, {}).xml));
 });
 
 // ---- SRR -----------------------------------------------------------------------

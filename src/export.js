@@ -75,6 +75,11 @@
       var data = inst.tables[t.n];
       if (!data || !t.x) return;
       var label = form.n + ' / ' + t.n;
+      if (t.flat) {
+        // no element of its own: the cells go straight inside the form element
+        lines = lines.concat(cellLines(spec, t, data.cells, indent, label, out, form.n + '|' + t.n + '|'));
+        return;
+      }
       if (t.k === 'S') {
         lines = lines.concat(block(t.n, cellLines(spec, t, data.cells, indent + TAB, label, out, form.n + '|' + t.n + '|'), indent));
         return;

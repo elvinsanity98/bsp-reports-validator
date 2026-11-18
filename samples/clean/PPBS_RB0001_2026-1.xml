@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PPBS xmlns="http://bsp.gov.ph/xml/PPBS/2.0">
+  <Header>
+    <Undertaking>RB0001</Undertaking>
+    <Year>2026</Year>
+    <Period>1</Period>
+  </Header>
+  <PPBS>
+    <R0010C0010>2026-04-24</R0010C0010>
+    <R0020C0010>1</R0020C0010>
+    <R0030C0010>2</R0030C0010>
+  </PPBS>
+</PPBS>

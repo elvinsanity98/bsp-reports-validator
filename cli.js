@@ -20,7 +20,7 @@
 //   --from DATE --to DATE       reports filed by date range, such as WRR_RCB (YYYY-MM-DD)
 // Other:
 //   --report NAME           which report the file is, when it cannot be told from the file
-//                           (AFRD, BCCR, FRP_S for 15.0, FRP_S_16 for 16.0, SBLAF, SRR, WRR_RCB)
+//                           (AFRD, BCCR, FRP_S for 15.0, FRP_S_16 for 16.0, PPBS, SBLAF, SRR, WRR_RCB)
 //   --prior FILE            an earlier period's XML, for period-on-period rules (repeatable)
 //   --csv FILE              write the findings to a CSV file
 //   --all                   list every finding (default: first 40)

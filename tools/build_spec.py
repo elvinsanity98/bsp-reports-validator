@@ -220,6 +220,8 @@ def read_form(sheet):
                 left = [clean(v) for v in row[:code_at]]
                 acct = next((v for v in left if re.fullmatch(r'\d{3,}', v)), '')
                 label = ' '.join(v for v in left if v and not re.fullmatch(r'\d{3,}', v))
+                # some labels carry a typed-in backslash-n (PPBS); it is not a line break anywhere
+                label = re.sub(r'\s*\\n\s*', ' ', label)
                 t['rows'].append([row[code_at], label, acct])
                 row_seen.add(row[code_at])
             for c, v in enumerate(row):
@@ -316,6 +318,21 @@ def build(xsd, raw):
             stats['form in XSD, not in specification'] += 1
             sf = {'title': '', 'z': None, 'fields': [], 'tables': []}
         fo = {'n': name, 't': sf['title']}
+        # A table with no element of its own, its cells straight inside the form
+        # element (PPBS: <PPBS><R0010C0010>...</PPBS>). The XSD shows those cells as
+        # fields of the form; they are kept as the cells of the table the
+        # specification names, marked "flat".
+        flat = {}
+        if xf is not None and not xf.get('item'):
+            for t in sf['tables']:
+                if t['name'] in xf['tables']:
+                    continue
+                own = collections.OrderedDict((n, l) for n, l in xf['fields'].items() if n in t['cells'])
+                if own:
+                    flat[t['name']] = own
+                    for n in own:
+                        del xf['fields'][n]
+                    stats['tables without an element of their own'] += 1
         if xf is not None:
             fo['x'] = 1
             if xf['req']:
@@ -332,12 +349,16 @@ def build(xsd, raw):
         xsd_tables = xf['tables'] if xf else {}
         for tn in list(spec_tables) + [n for n in xsd_tables if n not in spec_tables]:
             st, xt = spec_tables.get(tn), xsd_tables.get(tn)
+            if tn in flat:
+                xt = {'list': False, 'cells': flat[tn], 'req': False}
             if st is None:
                 stats['table in XSD, not in specification'] += 1
                 st = {'kind': 'Y' if xt['list'] else 'S', 'title': '', 'rows': [], 'cols': [], 'cells': {}}
             to = {'n': tn, 'k': st['kind'], 't': st['title']}
             if xt is not None:
                 to['x'] = 1
+                if tn in flat:
+                    to['flat'] = 1
                 if xt.get('req'):
                     to['r'] = 1
                 if xt['list']:

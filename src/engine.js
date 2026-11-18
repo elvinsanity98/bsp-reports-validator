@@ -250,30 +250,32 @@
       return rec;
     }
 
+    function readCell(c, table, formName, itemNo, cells) {
+      var def = table.c[c.name];
+      var at = { form: formName, table: table.n, cell: c.name };
+      if (itemNo !== undefined) at.item = itemNo;
+      var label = formName + ' / ' + table.n + (itemNo !== undefined ? ' entry ' + (itemNo + 1) : '') + ' / ' + c.name;
+      if (!def) {
+        nsOk(c);
+        add('error', 'XSD-UNKNOWN', label + ' is not a cell of this table in the schema.', c, at);
+        return;
+      }
+      if (def[0] !== 0) {
+        add('error', 'XSD-CALCULATED', label + ' is a total the BSP works out itself. The schema does not accept it in the file; remove it.', c, at);
+        return;
+      }
+      if (cells[c.name]) {
+        add('error', 'XSD-DUPLICATE', label + ' appears more than once.', c, at);
+        return;
+      }
+      cells[c.name] = leaf(c, cellType(spec, def), { text: label, at: at });
+    }
+
     function readCells(el, table, formName, itemNo) {
       var cells = {};
       strayText(el);
       attrsOk(el);
-      el.children.forEach(function (c) {
-        var def = table.c[c.name];
-        var at = { form: formName, table: table.n, cell: c.name };
-        if (itemNo !== undefined) at.item = itemNo;
-        var label = formName + ' / ' + table.n + (itemNo !== undefined ? ' entry ' + (itemNo + 1) : '') + ' / ' + c.name;
-        if (!def) {
-          nsOk(c);
-          add('error', 'XSD-UNKNOWN', label + ' is not a cell of this table in the schema.', c, at);
-          return;
-        }
-        if (def[0] !== 0) {
-          add('error', 'XSD-CALCULATED', label + ' is a total the BSP works out itself. The schema does not accept it in the file; remove it.', c, at);
-          return;
-        }
-        if (cells[c.name]) {
-          add('error', 'XSD-DUPLICATE', label + ' appears more than once.', c, at);
-          return;
-        }
-        cells[c.name] = leaf(c, cellType(spec, def), { text: label, at: at });
-      });
+      el.children.forEach(function (c) { readCell(c, table, formName, itemNo, cells); });
       if (itemNo !== undefined) {
         Object.keys(table.c).forEach(function (code) {
           var def = table.c[code];
@@ -290,8 +292,12 @@
     function readBody(el, form, inst) {
       strayText(el);
       attrsOk(el);
+      // a table whose cells sit straight inside the form element (PPBS)
+      var flat = form.flat, flatCells = {};
+      if (flat) inst.tables[flat.n] = { line: el.line, cells: flatCells };
       el.children.forEach(function (c) {
         nsOk(c);
+        if (flat && flat.c[c.name]) { readCell(c, flat, form.n, undefined, flatCells); return; }
         var table = form.tableByName[c.name];
         if (table && table.x) {
           if (inst.tables[c.name]) {
@@ -801,6 +807,23 @@
             if (isUnk(b)) return b;
             if (!numeric(b) || num(b) === 0) return unk('a FLOOR step that is not a number');
             return Math.floor(num(a) / num(b) + 1e-9) * num(b);
+          case 'TIMESTAMP':
+            // a date as a point in time; dates are kept as YYYY-MM-DD, which compare in order
+            a = scalar(this.eval(n.args[0], ctx));
+            if (isUnk(a)) return a;
+            if (a === null || a === '') return unk('an empty date');
+            return /^\d{4}-\d{2}-\d{2}/.test(String(a)) ? String(a).slice(0, 10) : unk('a date that is not YYYY-MM-DD');
+          case 'LASTDATE':
+            // LASTDATE("Q"; year; period): the last day of that quarter ("M" month, "S" half year, "Y" year)
+            var unit = scalar(this.eval(n.args[0], ctx)), yr = scalar(this.eval(n.args[1], ctx));
+            var per = n.args[2] ? scalar(this.eval(n.args[2], ctx)) : 1;
+            if (isUnk(unit)) return unit;
+            if (isUnk(yr)) return yr;
+            if (isUnk(per)) return per;
+            var months = { M: 1, Q: 3, S: 6, H: 6, Y: 12, A: 12 }[String(unit).toUpperCase()];
+            if (!months || !numeric(yr) || !numeric(per)) return unk('LASTDATE of "' + unit + '"');
+            var end = new Date(Date.UTC(num(yr), num(per) * months, 0));
+            return end.toISOString().slice(0, 10);
           case 'LEN':
             a = scalar(this.eval(n.args[0], ctx));
             if (isUnk(a)) return a;
@@ -860,7 +883,7 @@
       if (out.length >= limit) return;
       if (n.t === 'bin') { visit(n.a); visit(n.b); return; }
       if (n.t === 'neg') { visit(n.a); return; }
-      if (n.t === 'call' && (n.fn === 'IF' || n.fn === 'MAX' || n.fn === 'MIN' || n.fn === 'ISANYOF')) { n.args.forEach(visit); return; }
+      if (n.t === 'call' && (n.fn === 'IF' || n.fn === 'MAX' || n.fn === 'MIN' || n.fn === 'ISANYOF' || n.fn === 'TIMESTAMP')) { n.args.forEach(visit); return; }
       if (n.t !== 'ref' && n.t !== 'call') return;
       var text = show(n);
       if (seen[text]) return;

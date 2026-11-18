@@ -202,7 +202,14 @@ function srrBroken(srr) {
   return fx.buildXml(srr, { year: 2026, period: 2, forms });   // and the CAR schedule in a month that is not a quarter-end
 }
 
-Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.load('SBLAF'), SPEC.load('BCCR'), SPEC.load('SRR')]).then(([spec, wrr, afrd, sblaf, bccr, srr]) => {
+// PPBS: proof that the quarter's balance sheet was published or posted. The
+// cells sit straight inside <PPBS>, with no table element of their own.
+const ppbs = (cells) => ({ PPBS: Object.fromEntries(Object.entries(cells).map(([k, v]) => ['@' + k, v])) });
+
+Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.load('SBLAF'), SPEC.load('BCCR'), SPEC.load('SRR'), SPEC.load('PPBS')]).then(([spec, wrr, afrd, sblaf, bccr, srr, pp]) => {
+  write('clean/PPBS_RB0001_2026-1.xml', fx.buildXml(pp, { year: 2026, period: 1, forms: ppbs({ R0010C0010: '2026-04-24', R0020C0010: '1', R0030C0010: '2' }) }));
+  // posted before the quarter ended, and "Others" chosen without the newspaper's name
+  write('with-errors/PPBS_RB0001_2026-2_errors.xml', fx.buildXml(pp, { year: 2026, period: 2, forms: ppbs({ R0010C0010: '2026-06-15', R0020C0010: '89', R0030C0010: '1' }) }));
   write('clean/SRR_RB0001_2026-03.xml', fx.buildXml(srr, { year: 2026, period: 3, forms: srrForms(3) }));
   write('with-errors/SRR_RB0001_2026-02_errors.xml', srrBroken(srr));
   write('clean/BCCR_RB0001_2026-1.xml', fx.buildXml(bccr, { year: 2026, period: 1, forms: bccrForms(bccr, [1, 2, 3], [3, 0, 2]) }));
@@ -236,12 +243,14 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.l
     'clean/SBLAF_RB0001_2026-1.xml          SBLAF business loan applications for a quarter, no findings',
     'clean/BCCR_RB0001_2026-1.xml           consumer complaints for a quarter, one office, no findings',
     'clean/SRR_RB0001_2026-03.xml           regulatory relief at a quarter-end, FRP and CAR schedules, no findings',
+    'clean/PPBS_RB0001_2026-1.xml           proof of publication or posting of the balance sheet, no findings',
     'with-errors/FRP_S_RB0001_2026-03_errors.xml       schema errors, a missing schedule, failed reconciliations',
     'with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml  bad amounts, a thrift-bank line, an unnamed "others" line, a wrong week',
     'with-errors/AFRD_RB0001_2026-2_errors.xml         a missing list, a comma, a retired column, totals that do not agree',
     'with-errors/SBLAF_RB0001_2026-4_errors.xml        blank cells, a 0 for "NA", an approval with no amount, no annual schedule',
     'with-errors/BCCR_RB0001_2026-3_errors.xml         a month of another quarter, a name for absent "others", a blank count, schedules that disagree',
     'with-errors/SRR_RB0001_2026-02_errors.xml         gross loans that change with the adjustments, too much ACL booked, a negative, CAR in February',
+    'with-errors/PPBS_RB0001_2026-2_errors.xml         posted before the quarter ended, "Others" chosen with no newspaper named',
     'with-errors/not-well-formed.xml        a closing tag that does not match',
     '',
     'All figures are made up. The page recognises which report a file is.',
@@ -253,6 +262,7 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.l
     '  node cli.js samples/clean/SBLAF_RB0001_2026-1.xml',
     '  node cli.js samples/clean/BCCR_RB0001_2026-1.xml',
     '  node cli.js samples/clean/SRR_RB0001_2026-03.xml',
+    '  node cli.js samples/clean/PPBS_RB0001_2026-1.xml --bank RB',
     ''
   ].join('\r\n'));
   write('branches.csv', '001,9,4\r\n002,9,4\r\n');

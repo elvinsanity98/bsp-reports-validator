@@ -91,6 +91,7 @@
       f.tb.forEach(function (t) {
         f.tableByName[t.n] = t;
         t.form = f;
+        if (t.flat) f.flat = t;       // cells written straight inside the form element
         t.rowLabel = {};
         t.colLabel = {};
         (t.rows || []).forEach(function (r) { t.rowLabel[r[0]] = r; });
