@@ -375,7 +375,8 @@ const week = (row, amount) => ({ [row + 'C0020']: amount, [row + 'C0050']: amoun
 
 test('reports: each file says which report it is', () => {
   assert.deepStrictEqual(SPEC.list().map((r) => r.id + ':' + r.report + ' ' + r.version + ':' + r.periodStyle),
-    ['AFRD:AFRD 1.0:quarter', 'BCCR:BCCR 1.0:quarter', 'FRP_S:FRP_S 15.0:month', 'FRP_S_16:FRP_S 16.0:month', 'SBLAF:SBLAF 1.0:quarter', 'WRR_RCB:WRR_RCB 1.0:range']);
+    ['AFRD:AFRD 1.0:quarter', 'BCCR:BCCR 1.0:quarter', 'FRP_S:FRP_S 15.0:month', 'FRP_S_16:FRP_S 16.0:month', 'SBLAF:SBLAF 1.0:quarter',
+      'SRR:SRR 2.0:month', 'WRR_RCB:WRR_RCB 1.0:range']);
   assert.strictEqual(SPEC.detectXmlText(sample('clean/BCCR_RB0001_2026-1.xml')), 'BCCR');
   assert.strictEqual(SPEC.detectSheets(['BCCR_PRODUCT', 'BCCR_CHANNEL', 'dropdowns']), 'BCCR');
   assert.strictEqual(SPEC.detectXmlText(sample('clean/SBLAF_RB0001_2026-1.xml')), 'SBLAF');
@@ -707,6 +708,30 @@ test('rules: messages do not repeat the rule code', () => {
       assert.ok(!r[1].replace(/[\s_-]/g, '-').toUpperCase().startsWith(r[0].replace(/[\s_-]/g, '-').toUpperCase()), r[0] + ': ' + r[1].slice(0, 60));
     });
   }
+});
+
+// ---- SRR -----------------------------------------------------------------------
+
+test('SRR: samples, and a template read in its own layout', async () => {
+  const srr = await SPEC.load('SRR');
+  assert.strictEqual(srr.title, 'Supplemental Report on Regulatory Relief');
+  assert.strictEqual(SPEC.detectXmlText(sample('clean/SRR_RB0001_2026-03.xml')), 'SRR');
+  let r = ENGINE.check(srr, ENGINE.readXml(sample('clean/SRR_RB0001_2026-03.xml'), srr), {});
+  assert.deepStrictEqual(r.findings.map((f) => f.code + ' ' + f.msg), []);
+  assert.strictEqual(r.evaluator.valueOf('SRR_FRP', 'MAIN', 'R0230C0130'), 1070000, 'adjusted gross loans, worked out');
+  assert.strictEqual(Math.round(r.evaluator.valueOf('SRR_CAR', 'MAIN_CAR', 'R0100C0010') * 1e6) / 1e6, 0.25, 'CET1 ratio, worked out');
+  r = ENGINE.check(srr, ENGINE.readXml(sample('with-errors/SRR_RB0001_2026-02_errors.xml'), srr), {});
+  assert.deepStrictEqual(r.findings.map((f) => f.code + (f.kind === 'rule' ? ' ' + f.left + ' ' + f.op + ' ' + f.right : '')).sort(), [
+    'REQ-SRR_CAR-2 false = true', 'RIN-SRR_FRP-1-1 1070000 = 1063000', 'RIN-SRR_FRP-1-26 1070000 = 1063000',
+    'RIN-SRR_FRP-1-27 600000 <= 500000', 'XSD-TYPE'].sort());
+  assert.ok(/"-100.00" is negative; it must be a number of 0 or more, with up to 2 decimals/.test(r.findings.find((f) => f.code === 'XSD-TYPE').msg));
+  assert.strictEqual(r.stats.skipped.format, 3, 'the totals over the negative value are not checked');
+  assert.ok(!r.findings.some((f) => /^[-\s]/.test(f.msg)), 'messages without the code or a leading dash');
+  // the workbook written from the sample reads back to the same values
+  const book = await TEMPLATE.readWorkbook((await EXPORTER.toXlsx(srr, ENGINE.readXml(sample('clean/SRR_RB0001_2026-03.xml'), srr))).bytes);
+  assert.strictEqual(await TEMPLATE.detect(book), 'SRR');
+  const back = TEMPLATE.readTemplate(book, srr, TEMPLATE.readHeader(book, srr));
+  assert.deepStrictEqual(ENGINE.check(srr, back, {}).findings, []);
 });
 
 // ---- FRP_S version 16.0 next to 15.0 ---------------------------------------------

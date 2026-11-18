@@ -172,7 +172,39 @@ function bccrBroken(bccr) {
   return fx.buildXml(bccr, { year: 2026, period: 3, forms });
 }
 
-Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.load('SBLAF'), SPEC.load('BCCR')]).then(([spec, wrr, afrd, sblaf, bccr]) => {
+// SRR: loans of one sector under regulatory relief. Adjustments [B] move 5,000
+// of past-due and 2,000 of non-performing loans back to current, so the
+// adjusted current balance is 1,007,000 and gross loans stay 1,070,000.
+function srrForms(period) {
+  const forms = {
+    SRR_FRP: {
+      MAIN: { R0020C0010: '1000000.00', R0020C0020: '50000.00', R0020C0030: '20000.00', R0020C0050: '15000.00',
+        R0020C0070: '5000.00', R0020C0080: '2000.00', R0020C0090: '1000.00', R0020C0100: '1007000.00' },
+      MAIN_A: { R0010C0010: '500000.00', R0020C0010: '200000.00' },
+      MAIN_B: { R0010C0010: '300000.00', R0010C0020: '100000.00', R0020C0010: '400000.00', R0020C0020: '150000.00' }
+    }
+  };
+  if ([3, 6, 9, 12].includes(period)) {
+    forms.SRR_CAR = {
+      MAIN_CAR: { R0020C0010: '50000000.00', R0020C0020: '1500000.00', R0030C0010: '0.00', R0030C0020: '0.00', R0040C0010: '2000000.00', R0040C0020: '0.00',
+        R0060C0010: '180000000.00', R0060C0020: '0.00', R0070C0010: '0.00', R0070C0020: '0.00', R0080C0010: '20000000.00', R0080C0020: '0.00',
+        R0100C0020: '0.0075', R0110C0020: '0.0075', R0120C0020: '0.0075', R0130C0020: '0.0075' }
+    };
+  }
+  return forms;
+}
+
+function srrBroken(srr) {
+  const forms = srrForms(3);
+  forms.SRR_FRP.MAIN.R0020C0100 = '1000000.00';     // adjusted current no longer takes in the reclassified loans
+  forms.SRR_FRP.MAIN_A.R0020C0010 = '600000.00';    // more ACL booked than approved
+  forms.SRR_FRP.MAIN.R0050C0010 = '-100.00';        // a negative balance
+  return fx.buildXml(srr, { year: 2026, period: 2, forms });   // and the CAR schedule in a month that is not a quarter-end
+}
+
+Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.load('SBLAF'), SPEC.load('BCCR'), SPEC.load('SRR')]).then(([spec, wrr, afrd, sblaf, bccr, srr]) => {
+  write('clean/SRR_RB0001_2026-03.xml', fx.buildXml(srr, { year: 2026, period: 3, forms: srrForms(3) }));
+  write('with-errors/SRR_RB0001_2026-02_errors.xml', srrBroken(srr));
   write('clean/BCCR_RB0001_2026-1.xml', fx.buildXml(bccr, { year: 2026, period: 1, forms: bccrForms(bccr, [1, 2, 3], [3, 0, 2]) }));
   write('with-errors/BCCR_RB0001_2026-3_errors.xml', bccrBroken(bccr));
   write('clean/SBLAF_RB0001_2026-1.xml', fx.buildXml(sblaf, { year: 2026, period: 1, forms: { 'SBLAF-Q': { MAIN: sblafMain(sblaf) } } }));
@@ -203,11 +235,13 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.l
     'clean/AFRD_RB0001_2026-2.xml           AFRD financing report for a quarter, no findings (profile: no subsidiaries)',
     'clean/SBLAF_RB0001_2026-1.xml          SBLAF business loan applications for a quarter, no findings',
     'clean/BCCR_RB0001_2026-1.xml           consumer complaints for a quarter, one office, no findings',
+    'clean/SRR_RB0001_2026-03.xml           regulatory relief at a quarter-end, FRP and CAR schedules, no findings',
     'with-errors/FRP_S_RB0001_2026-03_errors.xml       schema errors, a missing schedule, failed reconciliations',
     'with-errors/WRR_RCB_RB0001_2026-09-19_errors.xml  bad amounts, a thrift-bank line, an unnamed "others" line, a wrong week',
     'with-errors/AFRD_RB0001_2026-2_errors.xml         a missing list, a comma, a retired column, totals that do not agree',
     'with-errors/SBLAF_RB0001_2026-4_errors.xml        blank cells, a 0 for "NA", an approval with no amount, no annual schedule',
     'with-errors/BCCR_RB0001_2026-3_errors.xml         a month of another quarter, a name for absent "others", a blank count, schedules that disagree',
+    'with-errors/SRR_RB0001_2026-02_errors.xml         gross loans that change with the adjustments, too much ACL booked, a negative, CAR in February',
     'with-errors/not-well-formed.xml        a closing tag that does not match',
     '',
     'All figures are made up. The page recognises which report a file is.',
@@ -218,6 +252,7 @@ Promise.all([SPEC.load('FRP_S'), SPEC.load('WRR_RCB'), SPEC.load('AFRD'), SPEC.l
     '  node cli.js samples/clean/AFRD_RB0001_2026-2.xml --bank RB --subsidiaries 0',
     '  node cli.js samples/clean/SBLAF_RB0001_2026-1.xml',
     '  node cli.js samples/clean/BCCR_RB0001_2026-1.xml',
+    '  node cli.js samples/clean/SRR_RB0001_2026-03.xml',
     ''
   ].join('\r\n'));
   write('branches.csv', '001,9,4\r\n002,9,4\r\n');

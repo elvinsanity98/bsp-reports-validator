@@ -106,7 +106,10 @@
     if (type.enum) return 'one of the codes ' + type.enum.map(function (e) { return e[0]; }).join(', ');
     if (type.b === 'D') return 'a date written YYYY-MM-DD';
     if (type.b === 'i') return 'a whole number from ' + type.min + ' to ' + type.max;
-    if (type.b === 'd') return 'a number';
+    if (type.b === 'd') {
+      var dec = type.fd === undefined ? '' : Number(type.fd) === 0 ? ', with no decimals' : ', with up to ' + type.fd + ' decimals';
+      return (Number(type.min) === 0 ? 'a number of 0 or more' : 'a number') + dec;
+    }
     if (type.maxLen) return 'text of ' + (type.minLen > 0 ? type.minLen + ' to ' : 'up to ') + type.maxLen + ' characters';
     return 'text';
   }

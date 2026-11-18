@@ -130,6 +130,9 @@ def read_workbook(path):
     return raw
 
 
+DASHES = chr(0x2012) + chr(0x2013) + chr(0x2014) + chr(0x2015)   # figure dash, en dash, em dash, bar
+
+
 def clean(s):
     return re.sub(r'\s+', ' ', str(s)).strip() if s is not None else ''
 
@@ -374,7 +377,7 @@ def build(xsd, raw):
             return re.sub(r'[\s_-]', '-', t).upper()
         if loose(msg[:len(code)]) == loose(code) and (len(msg) == len(code) or msg[len(code)] in ' .:-'):
             msg = msg[len(code):]
-        msg = re.sub(r'^[\s.:-]+', '', msg)
+        msg = re.sub(r'^[\s.:' + DASHES + '-]+', '', msg)
         rule = [code, msg, clean(r[2]), r[3], clean(r[4]), r[5] or 0,
                 clean(r[6]) or 0, clean(r[7]) or 0, 1 if r[8] == 'Warning' else 0]
         key = json.dumps(rule)

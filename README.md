@@ -10,6 +10,7 @@ It reads the file on your own computer and reports what the BSP's validation wou
 | `FRP_S` | 15.0 | Simplified FRP and FRP Related Reports |
 | `FRP_S` | 16.0 | Simplified FRP and FRP Related Reports, the next version (FRP 16): adds the AFRD and DDA schedules |
 | `SBLAF` | 1.0 (specification 1.0.2) | Report on Business Loan Applications using SBLAF Templates |
+| `SRR` | 2.0 | Supplemental Report on Regulatory Relief (FRP schedule monthly, CAR schedule at quarter-ends) |
 | `WRR_RCB` | 1.0 | Weekly Reserves Report for Rural and Cooperative Banks |
 
 Open `index.html` in a current Chrome, Edge or Firefox, or use https://elvinsanity98.github.io/bsp-reports-validator/.
@@ -37,7 +38,7 @@ The tool recognises which report a file is, from the root element of the XML or 
    or a line meant for another type of bank. The BSP rejects it with the same code in an XML file. When the BSP portal reads
    a filled-in template it leaves such a value out instead (seen in BCCR: "NONE" or 0 typed in a "Specify others" cell),
    so for a template it is a warning, and **Export to XML** leaves it out too and lists what it left out.
-3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S 15.0, 13,435 for FRP_S 16.0, 150 for SBLAF, 64 for AFRD, 57 for BCCR, 5 for WRR_RCB).
+3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S 15.0, 13,435 for FRP_S 16.0, 150 for SBLAF, 64 for AFRD, 57 for BCCR, 33 for SRR, 5 for WRR_RCB).
    - `REQ-` schedules that must, or must not, be submitted for the period and bank type
    - `STG1-` checks on single cells and groups of cells
    - `RIN-` reconciliations inside a schedule and between schedules, each with its tolerance
@@ -100,7 +101,7 @@ node cli.js <file.xml | file.zip | template.xlsx> [options]
   --year Y --month M       period of a monthly report, for the Excel template only (AFRD: --month is the quarter, 1 to 4)
   --from DATE --to DATE    period of a weekly report, for the Excel template only (YYYY-MM-DD)
   --report NAME            which report the file is, when the file cannot say: AFRD, BCCR, FRP_S (15.0),
-                           FRP_S_16 (16.0), SBLAF or WRR_RCB
+                           FRP_S_16 (16.0), SBLAF, SRR or WRR_RCB
   --prior FILE             an earlier period's XML (repeatable)
   --csv FILE               write the findings to a CSV file
   --all                    list every finding
@@ -289,6 +290,9 @@ The tool was compared with the BSP's own processing results for the past submiss
   The BSP accepted that file in January 2026. The tool uses specification 1.0.2, while the bank's templates up to July 2026 are 1.0,
   so the rule was most likely added or tightened since. Expect it at the next quarter 4.
 - Values read from the filled Excel templates equal the values in the XML filed for the same quarter (221 cells, 442 with the annual schedule).
+
+**SRR** has no past submissions or BSP results to compare with yet. Its blank template reads in its own layout, and the samples
+exercise its rules: gross loans before and after the relief adjustments must agree, and booked allowances cannot exceed the approved ones.
 
 This is evidence from one bank that files only a part of the schedules (no trust, e-money, FCDU or foreign-office business).
 Rules that this bank's data never exercises are untested against the BSP.
