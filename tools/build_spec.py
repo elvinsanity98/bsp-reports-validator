@@ -396,7 +396,8 @@ def main():
     ap.add_argument('folder', help='folder holding the .xsd and the _specification.xlsx')
     ap.add_argument('--title', default='', help='name of the report as the BSP writes it, shown on the page')
     ap.add_argument('--cache', help='pickle file for the extracted workbook cells')
-    ap.add_argument('--out', help='output file (default: src/spec-<report>.js)')
+    ap.add_argument('--out', help='output file (default: src/spec-<id>.js)')
+    ap.add_argument('--id', help='name of this definition in the tool, when two versions of one report are kept (default: the report code)')
     args = ap.parse_args()
 
     xsd_path = glob.glob(os.path.join(args.folder, '*.xsd'))
@@ -423,10 +424,13 @@ def main():
     spec['periodStyle'] = ('range' if 'FromDate' in names and 'ToDate' in names
                            else 'month' if period.get('max') == '12'
                            else 'quarter' if period.get('max') == '4' else '')
-    out = args.out or os.path.join(HERE, '..', 'src', 'spec-%s.js' % spec['report'].lower())
+    spec_id = args.id or spec['report']
+    out = args.out or os.path.join(HERE, '..', 'src', 'spec-%s.js' % spec_id.lower())
 
     # What the page needs to recognise a file before it unpacks the definition.
     meta = collections.OrderedDict((k, spec[k]) for k in ('report', 'version', 'title', 'root', 'ns', 'periodStyle'))
+    if spec_id != spec['report']:
+        meta['id'] = spec_id
     meta['sheets'] = [f['n'] for f in spec['forms'] if f.get('x')]
     text = json.dumps(spec, ensure_ascii=True, separators=(',', ':'))
     meta['blob'] = base64.b64encode(gzip.compress(text.encode('utf-8'), 9, mtime=0)).decode('ascii')
@@ -438,7 +442,7 @@ def main():
         "  'use strict';",
         '  var BSPV = root.BSPV = root.BSPV || {};',
         '  (BSPV.specs = BSPV.specs || {})[%s] = %s;' % (
-            json.dumps(spec['report']), json.dumps(meta, ensure_ascii=True, separators=(',', ':'))),
+            json.dumps(spec_id), json.dumps(meta, ensure_ascii=True, separators=(',', ':'))),
         "})(typeof self !== 'undefined' ? self : globalThis);",
         ''
     ]

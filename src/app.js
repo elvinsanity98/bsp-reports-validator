@@ -109,7 +109,7 @@
 
   function renderHeaderFields() {
     var box = clear($('header-fields')), spec = state.spec;
-    var keep = state.header[spec.report] = state.header[spec.report] || {};
+    var keep = state.header[spec.id] = state.header[spec.id] || {};
     spec.header.forEach(function (hd) {
       var name = hd[0], type = spec.types[hd[1]], id = 'h-' + name, input;
       if (name === 'Period' && spec.periodStyle === 'quarter') {
@@ -141,7 +141,7 @@
   // rules use, and its rule list.
   async function useReport(report) {
     var spec = await SPEC.load(report);
-    if (state.spec && state.spec.report !== report) state.history = {};
+    if (state.spec && state.spec.id !== report) state.history = {};
     state.spec = spec;
     $('report').value = report;
     renderHeaderFields();
@@ -231,8 +231,8 @@
     var kind = kindOf(input.name), found;
     if (kind === 'xlsx') {
       var book = await TEMPLATE.readWorkbook(input.bytes);
-      found = SPEC.detectSheets(book.sheets.map(function (sh) { return sh.name; }));
-      if (found && found !== state.spec.report) await useReport(found);
+      found = await TEMPLATE.detect(book);
+      if (found && found !== state.spec.id) await useReport(found);
       // a workbook exported from here carries its bank code and period in a Header sheet
       if (input.fresh) applyHeader(TEMPLATE.readHeader(book, state.spec));
       return TEMPLATE.readTemplate(book, state.spec, headerValues(), { branchCode: profile().branchCode });
@@ -244,17 +244,17 @@
       input.inner = xmls[0];
       var text = await zip.read(xmls[0]);
       found = SPEC.detectXmlText(text);
-      if (found && found !== state.spec.report) await useReport(found);
+      if (found && found !== state.spec.id) await useReport(found);
       return ENGINE.readXml(text, state.spec);
     }
     found = SPEC.detectXmlText(ENGINE.decode(input.bytes).text);
-    if (found && found !== state.spec.report) await useReport(found);
+    if (found && found !== state.spec.id) await useReport(found);
     return ENGINE.readXmlBytes(input.bytes, state.spec);
   }
 
   // Sets the reporting period fields to the values a file carries.
   function applyHeader(values) {
-    var keep = state.header[state.spec.report] = state.header[state.spec.report] || {};
+    var keep = state.header[state.spec.id] = state.header[state.spec.id] || {};
     Object.keys(values).forEach(function (k) {
       var el = $('h-' + k), v = String(values[k]);
       if (!el) return;
@@ -1201,13 +1201,13 @@
   async function init() {
     var reports = SPEC.list();
     reports.forEach(function (r) {
-      $('report').appendChild(h('option', { value: r.report }, r.report + ' ' + r.version + (r.title ? '  -  ' + r.title : '')));
+      $('report').appendChild(h('option', { value: r.id }, r.report + ' ' + r.version + (r.title ? '  -  ' + r.title : '')));
     });
     $('report-list').textContent = 'Reports this tool knows: ' + reports.map(function (r) { return r.report + ' ' + r.version; }).join(', ') + '.';
     loadSetup();
-    var known = reports.some(function (r) { return r.report === saved.report; });
-    var first = reports.filter(function (r) { return r.report === 'FRP_S'; })[0] || reports[0];
-    await useReport(known ? saved.report : first.report);
+    var known = reports.some(function (r) { return r.id === saved.report; });
+    var first = reports.filter(function (r) { return r.id === 'FRP_S'; })[0] || reports[0];
+    await useReport(known ? saved.report : first.id);
 
     var rerun = function () { $('profile-summary').textContent = profileSummary(); saveSetup(); run(); };
     ['p-group', 'p-parent', 'p-branches', 'p-subsidiaries', 'p-branch-code', 'p-office-name', 'p-domestic', 'p-trust', 'p-emi', 'p-branch-list'].forEach(function (id) {

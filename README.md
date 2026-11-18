@@ -8,6 +8,7 @@ It reads the file on your own computer and reports what the BSP's validation wou
 | `AFRD` | 1.0 | AFRD Financing (Mandatory Agriculture, Fisheries and Rural Development Financing) |
 | `BCCR` | 1.0 (specification 1.0.1) | Banks' Consolidated Complaints Report |
 | `FRP_S` | 15.0 | Simplified FRP and FRP Related Reports |
+| `FRP_S` | 16.0 | Simplified FRP and FRP Related Reports, the next version (FRP 16): adds the AFRD and DDA schedules |
 | `SBLAF` | 1.0 (specification 1.0.2) | Report on Business Loan Applications using SBLAF Templates |
 | `WRR_RCB` | 1.0 | Weekly Reserves Report for Rural and Cooperative Banks |
 
@@ -36,7 +37,7 @@ The tool recognises which report a file is, from the root element of the XML or 
    or a line meant for another type of bank. The BSP rejects it with the same code in an XML file. When the BSP portal reads
    a filled-in template it leaves such a value out instead (seen in BCCR: "NONE" or 0 typed in a "Specify others" cell),
    so for a template it is a warning, and **Export to XML** leaves it out too and lists what it left out.
-3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S, 150 for SBLAF, 64 for AFRD, 57 for BCCR, 5 for WRR_RCB).
+3. **The BSP's rules**: every rule of the specification's "Assertions" sheet (13,180 for FRP_S 15.0, 13,435 for FRP_S 16.0, 150 for SBLAF, 64 for AFRD, 57 for BCCR, 5 for WRR_RCB).
    - `REQ-` schedules that must, or must not, be submitted for the period and bank type
    - `STG1-` checks on single cells and groups of cells
    - `RIN-` reconciliations inside a schedule and between schedules, each with its tolerance
@@ -98,7 +99,8 @@ node cli.js <file.xml | file.zip | template.xlsx> [options]
   --code X                 bank code, for the Excel template only
   --year Y --month M       period of a monthly report, for the Excel template only (AFRD: --month is the quarter, 1 to 4)
   --from DATE --to DATE    period of a weekly report, for the Excel template only (YYYY-MM-DD)
-  --report CODE            which report the file is, when the file cannot say
+  --report NAME            which report the file is, when the file cannot say: AFRD, BCCR, FRP_S (15.0),
+                           FRP_S_16 (16.0), SBLAF or WRR_RCB
   --prior FILE             an earlier period's XML (repeatable)
   --csv FILE               write the findings to a CSV file
   --all                    list every finding
@@ -314,6 +316,28 @@ Rules that this bank's data never exercises are untested against the BSP.
   or per group of coded columns. This follows the blank template; it was not tested against a filled trust return.
 - **Rule versions.** The rules are the ones in the specification workbook the tool was built from. The BSP changes rules without changing the version number.
 
+## Two versions of FRP_S
+
+FRP_S 15.0 and 16.0 are both kept, because banks file 15.0 while they test 16.0 in the sandbox.
+An XML file goes to the version its namespace names (`http://bsp.gov.ph/xml/FRP_S/16.0`). A workbook goes by its
+sheets, and the 15.0 and 16.0 templates the BSP issued until 2026 have the same 99 sheets; then the row and column codes
+printed in them decide, because 16.0 added rows and columns to 26 tables. The report list on the page shows both.
+Both are report `FRP_S` to the BSP, in file names and when sending.
+
+What 16.0 changes, as the specification of November 2026 has it:
+
+- The AFRD schedules (AFRD_MRA to AFRD_D) are part of every quarter-end FRP file, and the DDA schedules of June and December.
+  Required-schedule rules (`REQ-AFRD_...`, `REQ-DDA_...`) say so. The earlier 16.0 specification, the one this bank's sandbox runs
+  of 2025 and 2026 were checked against, did not have them, so its runs are not evidence either way.
+- New columns and rows in 26 tables (FRP_25, FRP_30C, FRP_11A1 and others), 470 new rules and 212 dropped.
+- `STG1-FRP_22A-DEPOSITORS-...-2` (25 rules) asks for the number of depositors to be at least the amount (`FLOOR` of the total),
+  while its message says it should not be. Every file with deposits fails it as written; the tool reports it as a warning
+  and says why, until the BSP has applied it to a file.
+
+Compared with this bank's 16.0 sandbox runs (December 2024 to March 2026), the tool raises the BSP's findings with the same
+values: `RIN-CAR173` (1,014,501.97 against 1,044,923.18), `RIN-CAR172`, `RIN-CAR173`, `RIN-CAR174` and `RIN-MLR150` together,
+an incomplete list entry, and the `STG1-MICRO_MBS` warning. Besides them it raises only the two new rule groups above.
+
 ## Adding a report, or moving to a new version
 
 The rules are not written in this repository. They are compiled from the two files the BSP publishes for a report:
@@ -326,6 +350,7 @@ node test/run.js
 ```
 
 `build_spec.py` needs Python 3.8+ and `openpyxl`. It writes `src/spec-<report>.js` and prints a count of anything the schema and the specification disagree on.
+To keep a new version next to the old one, give it its own name: `--id FRP_S_16` writes `src/spec-frp_s_16.js`.
 For a new report, also add its `<script src="spec-<report>.js">` line to `src/index.html`. The page and the command line pick the report up from there.
 The BSP's files themselves are not kept in this repository.
 

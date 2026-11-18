@@ -374,7 +374,8 @@ const checkWrr = (xml, bank) => ENGINE.check(wrr, ENGINE.readXml(xml, wrr), { pr
 const week = (row, amount) => ({ [row + 'C0020']: amount, [row + 'C0050']: amount, [row + 'C0060']: amount, [row + 'C0070']: amount, [row + 'C0080']: amount });
 
 test('reports: each file says which report it is', () => {
-  assert.deepStrictEqual(SPEC.list().map((r) => r.report + ':' + r.periodStyle), ['AFRD:quarter', 'BCCR:quarter', 'FRP_S:month', 'SBLAF:quarter', 'WRR_RCB:range']);
+  assert.deepStrictEqual(SPEC.list().map((r) => r.id + ':' + r.report + ' ' + r.version + ':' + r.periodStyle),
+    ['AFRD:AFRD 1.0:quarter', 'BCCR:BCCR 1.0:quarter', 'FRP_S:FRP_S 15.0:month', 'FRP_S_16:FRP_S 16.0:month', 'SBLAF:SBLAF 1.0:quarter', 'WRR_RCB:WRR_RCB 1.0:range']);
   assert.strictEqual(SPEC.detectXmlText(sample('clean/BCCR_RB0001_2026-1.xml')), 'BCCR');
   assert.strictEqual(SPEC.detectSheets(['BCCR_PRODUCT', 'BCCR_CHANNEL', 'dropdowns']), 'BCCR');
   assert.strictEqual(SPEC.detectXmlText(sample('clean/SBLAF_RB0001_2026-1.xml')), 'SBLAF');
@@ -706,6 +707,58 @@ test('rules: messages do not repeat the rule code', () => {
       assert.ok(!r[1].replace(/[\s_-]/g, '-').toUpperCase().startsWith(r[0].replace(/[\s_-]/g, '-').toUpperCase()), r[0] + ': ' + r[1].slice(0, 60));
     });
   }
+});
+
+// ---- FRP_S version 16.0 next to 15.0 ---------------------------------------------
+
+// The March sample written for version 16.0: same cells, the 16.0 namespace.
+const as16 = (text) => text.replace('http://bsp.gov.ph/xml/FRP_S/15.0', 'http://bsp.gov.ph/xml/FRP_S/16.0');
+
+test('FRP_S 16.0: kept next to 15.0, and each file goes to its own version', async () => {
+  const s16 = await SPEC.load('FRP_S_16');
+  assert.strictEqual(s16.id, 'FRP_S_16');
+  assert.strictEqual(s16.report, 'FRP_S', 'the report code the BSP knows, for file names and sending');
+  assert.strictEqual(spec.id, 'FRP_S');
+  assert.strictEqual(SPEC.detectXmlText(sample('clean/FRP_S_RB0001_2026-03.xml')), 'FRP_S');
+  assert.strictEqual(SPEC.detectXmlText(as16(sample('clean/FRP_S_RB0001_2026-03.xml'))), 'FRP_S_16');
+  assert.strictEqual(SPEC.detectXmlText('<FRP_S xmlns="http://bsp.gov.ph/xml/FRP_S/17.0"/>'), 'FRP_S_16', 'an unknown version: the newest');
+  // version 16.0 brings the AFRD and DDA schedules into the FRP
+  ['AFRD_MRA', 'AFRD_A', 'DDA_REGULAR1'].forEach((n) => assert.ok(s16.formByName[n] && !spec.formByName[n], n));
+  const doc = ENGINE.readXml(as16(sample('clean/FRP_S_RB0001_2026-03.xml')), s16);
+  const r = ENGINE.check(s16, doc, { profile: fx.RB });
+  assert.ok(!r.findings.some((f) => /^XSD/.test(f.code)), r.findings.filter((f) => /^XSD/.test(f.code)).map((f) => f.msg).join(' '));
+  assert.ok(r.findings.some((f) => f.code === 'REQ-AFRD_MRA-1'), 'a quarter-end FRP 16 file carries the AFRD schedules');
+  assert.ok(!Object.keys(r.stats.skippedWhy).some((w) => /formula|function/.test(w)), JSON.stringify(r.stats.skippedWhy));
+  assert.strictEqual(EXPORTER.toXml(s16, doc, { now: new Date(2026, 3, 1) }).name.slice(0, 13), 'FRP_S_2026_3_');
+});
+
+test('FRP_S 16.0: workbooks with the same sheets are told apart by their codes', async () => {
+  const s16 = await SPEC.load('FRP_S_16');
+  const v15 = await TEMPLATE.readWorkbook((await EXPORTER.toXlsx(spec, ENGINE.readXml(sample('clean/FRP_S_RB0001_2026-03.xml'), spec))).bytes);
+  const v16 = await TEMPLATE.readWorkbook((await EXPORTER.toXlsx(s16, ENGINE.readXml(as16(sample('clean/FRP_S_RB0001_2026-03.xml')), s16))).bytes);
+  // the same schedules in both: drop the sheets only 16.0 has
+  v16.sheets = v16.sheets.filter((s) => s.name === 'Header' || spec.formByName[s.name]);
+  assert.deepStrictEqual(v16.sheets.map((s) => s.name), v15.sheets.map((s) => s.name));
+  assert.strictEqual(await TEMPLATE.detect(v15), 'FRP_S');
+  assert.strictEqual(await TEMPLATE.detect(v16), 'FRP_S_16');
+});
+
+test('FRP_S 16.0: FLOOR, and a rule that contradicts its own message is a warning', async () => {
+  const s16 = await SPEC.load('FRP_S_16');
+  const doc = ENGINE.readXml(as16(sample('clean/FRP_S_RB0001_2026-03.xml')), s16);
+  const t = doc.forms.FRP_22A[0].tables;
+  t.MAIN = t.MAIN || { cells: {} };
+  t.ADD1 = t.ADD1 || { cells: {} };
+  // the total of regular savings (R0250, worked out by the BSP) is 1,500.75
+  Object.keys(t.MAIN.cells).filter((c) => /C0100$/.test(c)).forEach((c) => { delete t.MAIN.cells[c]; });
+  t.MAIN.cells.R0010C0100 = { raw: '1500.75', v: 1500.75 };
+  t.ADD1.cells.R0010C0090 = { raw: '1500', v: 1500 };           // number of depositors
+  let f = ENGINE.check(s16, doc, { profile: fx.RB }).findings.filter((x) => x.code === 'STG1-FRP_22A-DEPOSITORS-C0090-2');
+  assert.deepStrictEqual(f, [], '1500 >= FLOOR(1500.75) holds');
+  t.ADD1.cells.R0010C0090 = { raw: '12', v: 12 };
+  f = ENGINE.check(s16, doc, { profile: fx.RB }).findings.filter((x) => x.code === 'STG1-FRP_22A-DEPOSITORS-C0090-2');
+  assert.deepStrictEqual(f.map((x) => x.sev + ' ' + x.left + ' ' + x.op + ' ' + x.right), ['warning 12 >= 1500']);
+  assert.ok(/message says/.test(f[0].note));
 });
 
 // ---- writing the XML from a template --------------------------------------------

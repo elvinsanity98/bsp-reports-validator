@@ -788,6 +788,16 @@
             return best;
           case 'ROW':
             return ctx.item ? ctx.item.index + 1 : null;
+          case 'FLOOR':
+            // FLOOR(x) rounds down to a whole number; FLOOR(x; step) to a multiple of step
+            a = scalar(this.eval(n.args[0], ctx));
+            if (isUnk(a)) return a;
+            if (a === null || a === '') a = 0;
+            if (!numeric(a)) return unk('text used as a number');
+            b = n.args[1] ? scalar(this.eval(n.args[1], ctx)) : 1;
+            if (isUnk(b)) return b;
+            if (!numeric(b) || num(b) === 0) return unk('a FLOOR step that is not a number');
+            return Math.floor(num(a) / num(b) + 1e-9) * num(b);
           case 'LEN':
             a = scalar(this.eval(n.args[0], ctx));
             if (isUnk(a)) return a;
@@ -940,6 +950,13 @@
     return 'other';
   }
 
+  var DOUBTFUL = [
+    { report: 'FRP_S', version: '16.0', code: /^STG1-FRP_22A-DEPOSITORS-C\d{4}-2$/,
+      note: 'The formula asks for the number of depositors to be at least the amount (FLOOR of the total), while the message says ' +
+        'it should not be. Every file with deposits fails it as written. It is new in this specification and the BSP has not yet ' +
+        'applied it to a file of this bank, so this tool reports it as a warning.' }
+  ];
+
   function check(spec, doc, opts) {
     opts = opts || {};
     var findings = doc.findings.slice();
@@ -1087,6 +1104,13 @@
         f.line = f.line === undefined ? ctx.item.data.line : f.line;
       }
       if (typeof L === 'number' && typeof R === 'number') f.diff = L - R;
+      // Rules whose formula says the opposite of their own message, so that a
+      // normal file fails them; the BSP has not applied them to a file yet.
+      var doubt = DOUBTFUL.filter(function (d) { return d.report === spec.report && d.version === spec.version && d.code.test(r[0]); })[0];
+      if (doubt) {
+        f.sev = 'warning';
+        f.note = doubt.note;
+      }
       // An empty sheet of the Excel template may still count as a nil schedule.
       if (doc.source === 'xlsx' && /^Required schedule/.test(r[1])) {
         f.sev = 'warning';

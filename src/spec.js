@@ -1,9 +1,13 @@
 // Unpacks the compiled report definitions (src/spec-<report>.js) and indexes them.
 //
-//   BSPV.spec.list()                  -> [{ report, version, title, root, ns, sheets, periodStyle }]
-//   BSPV.spec.load('WRR_RCB')         -> Promise of the full definition
-//   BSPV.spec.detectXmlText(text)     -> report code of an XML file, by its root element
-//   BSPV.spec.detectSheets([names])   -> report code of an Excel template, by its sheet names
+//   BSPV.spec.list()                  -> [{ id, report, version, title, root, ns, sheets, periodStyle }]
+//   BSPV.spec.load('WRR_RCB')         -> Promise of the full definition (spec.id, spec.report, spec.version, ...)
+//   BSPV.spec.detectXmlText(text)     -> id of the definition for an XML file, by its root element and namespace
+//   BSPV.spec.detectSheets([names])   -> id of the definition for an Excel template, by its sheet names
+//
+// A definition's id is its report code, unless two versions of one report are
+// kept: then the newer one has its own id (FRP_S version 15.0 is "FRP_S",
+// version 16.0 is "FRP_S_16"). spec.report is always the BSP's report code.
 //
 // spec.forms[]        { n: name, t: title, x: 1 when the schedule is part of the XML, r: 1 when the schema requires it,
 //                       z: { item, f, ty, t } for schedules repeated per book code,
@@ -38,15 +42,21 @@
     var specs = registry();
     return Object.keys(specs).sort().map(function (k) {
       var s = specs[k];
-      return { report: s.report, version: s.version, title: s.title, root: s.root, ns: s.ns, sheets: s.sheets, periodStyle: s.periodStyle || '' };
+      return { id: k, report: s.report, version: s.version, title: s.title, root: s.root, ns: s.ns, sheets: s.sheets, periodStyle: s.periodStyle || '' };
     });
   }
 
+  function newest(list) {
+    return list.slice().sort(function (a, b) { return parseFloat(b.version) - parseFloat(a.version); })[0];
+  }
+
+  // The definition whose root and namespace the file has; a file with another
+  // namespace (a version this tool does not have) gets the newest of that root.
   function detectXml(rootName, ns) {
     var all = list(), i;
-    for (i = 0; i < all.length; i++) if (all[i].ns === ns && all[i].root === rootName) return all[i].report;
-    for (i = 0; i < all.length; i++) if (all[i].root === rootName) return all[i].report;
-    return null;
+    for (i = 0; i < all.length; i++) if (all[i].ns === ns && all[i].root === rootName) return all[i].id;
+    var same = all.filter(function (s) { return s.root === rootName; });
+    return same.length ? newest(same).id : null;
   }
 
   // The report of an XML file, from its text. Looks at the first tag only, so
@@ -59,11 +69,15 @@
     return detectXml(m[1], ns ? ns[1] : '');
   }
 
+  // The definition that knows the most sheets of the workbook; between two
+  // versions of a report that know as many, the one missing fewer of its own.
   function detectSheets(names) {
-    var best = null, bestCount = 0;
+    var best = null, bestCount = 0, bestMissing = 0;
+    var have = names.map(function (n) { return String(n).trim(); });
     list().forEach(function (s) {
-      var count = names.filter(function (n) { return s.sheets.indexOf(String(n).trim()) >= 0; }).length;
-      if (count > bestCount) { best = s.report; bestCount = count; }
+      var count = have.filter(function (n) { return s.sheets.indexOf(n) >= 0; }).length;
+      var missing = s.sheets.filter(function (n) { return have.indexOf(n) < 0; }).length;
+      if (count > bestCount || (count && count === bestCount && missing < bestMissing)) { best = s.id; bestCount = count; bestMissing = missing; }
     });
     return best;
   }
@@ -138,9 +152,10 @@
     if (cache[report]) return cache[report];
     var entry = specs[report];
     if (!entry) return Promise.reject(new Error('This tool has no definition for the report "' + report + '".'));
+    var named = function (s) { s.id = report; return s; };
     if (NODE) {
       var text = require('zlib').gunzipSync(Buffer.from(entry.blob, 'base64')).toString('utf8');
-      cache[report] = Promise.resolve(index(JSON.parse(text)));
+      cache[report] = Promise.resolve(named(index(JSON.parse(text))));
       return cache[report];
     }
     if (typeof DecompressionStream === 'undefined') {
@@ -149,7 +164,7 @@
     var bin = atob(entry.blob), bytes = new Uint8Array(bin.length);
     for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-    cache[report] = new Response(stream).text().then(function (t) { return index(JSON.parse(t)); });
+    cache[report] = new Response(stream).text().then(function (t) { return named(index(JSON.parse(t))); });
     return cache[report];
   }
 

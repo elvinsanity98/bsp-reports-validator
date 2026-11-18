@@ -432,5 +432,62 @@
     return out;
   }
 
-  return { read: read, readWorkbook: readWorkbook, readTemplate: readTemplate, readHeader: readHeader, unzip: unzip, colName: colName, toRaw: toRaw };
+  // Which report definition a workbook is for: by its sheet names, and between
+  // versions of one report that share them (FRP_S 15.0 and 16.0 templates have
+  // the same 99 sheets) by the row and column codes printed in the sheets.
+  // Returns a Promise of the definition's id, or null.
+  function detect(book) {
+    var names = book.sheets.map(function (s) { return s.name; });
+    var first = SPEC.detectSheets(names);
+    if (!first) return Promise.resolve(null);
+    var all = SPEC.list(), report = all.filter(function (s) { return s.id === first; })[0].report;
+    var rivals = all.filter(function (s) { return s.report === report; });
+    if (rivals.length < 2) return Promise.resolve(first);
+    var printed = {};
+    book.sheets.forEach(function (sheet) {
+      var set = printed[sheet.name.trim()] = {};
+      Object.keys(sheet.rows).forEach(function (rn) {
+        var row = sheet.rows[rn];
+        Object.keys(row).forEach(function (c) { var v = row[c]; if (typeof v === 'string' && /^[RC]\d{4}$/.test(v.trim())) set[v.trim()] = true; });
+      });
+    });
+    return Promise.all(rivals.map(function (s) { return SPEC.load(s.id); })).then(function (specs) {
+      // the codes each version prints per schedule: a row code and a column code per cell
+      var known = specs.map(function (spec) {
+        var k = {};
+        spec.forms.forEach(function (form) {
+          if (!form.x) return;
+          var set = k[form.n] = {};
+          form.tb.forEach(function (t) {
+            Object.keys(t.c).forEach(function (code) {
+              var m = /^(R\d{4})(C\d{4})$/.exec(code);
+              if (m) { set[m[1]] = true; set[m[2]] = true; } else set[code] = true;
+            });
+          });
+        });
+        return k;
+      });
+      // only codes the versions disagree on count: printed where a version has
+      // them, or absent where it has not, is a vote for that version
+      var votes = specs.map(function () { return 0; });
+      Object.keys(printed).forEach(function (sheet) {
+        var sets = known.map(function (k) { return k[sheet]; });
+        if (sets.some(function (x) { return !x; })) return;
+        var codes = {};
+        sets.forEach(function (x) { Object.keys(x).forEach(function (c) { codes[c] = true; }); });
+        Object.keys(codes).forEach(function (c) {
+          var has = sets.map(function (x) { return !!x[c]; });
+          if (has.every(function (v) { return v === has[0]; })) return;
+          has.forEach(function (v, i) { if (v === !!printed[sheet][c]) votes[i]++; });
+        });
+      });
+      var best = first, bestVotes = -1;
+      specs.forEach(function (spec, i) {
+        if (votes[i] > bestVotes || (votes[i] === bestVotes && spec.id === first)) { best = spec.id; bestVotes = votes[i]; }
+      });
+      return best;
+    });
+  }
+
+  return { read: read, readWorkbook: readWorkbook, readTemplate: readTemplate, readHeader: readHeader, detect: detect, unzip: unzip, colName: colName, toRaw: toRaw };
 });

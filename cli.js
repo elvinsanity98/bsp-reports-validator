@@ -19,7 +19,8 @@
 //   --year YYYY --month M       reports filed by month (FRP_S) or by quarter (AFRD: --month is the quarter, 1 to 4)
 //   --from DATE --to DATE       reports filed by date range, such as WRR_RCB (YYYY-MM-DD)
 // Other:
-//   --report CODE           which report the file is, when it cannot be told from the file
+//   --report NAME           which report the file is, when it cannot be told from the file
+//                           (AFRD, BCCR, FRP_S for 15.0, FRP_S_16 for 16.0, SBLAF, WRR_RCB)
 //   --prior FILE            an earlier period's XML, for period-on-period rules (repeatable)
 //   --csv FILE              write the findings to a CSV file
 //   --all                   list every finding (default: first 40)
@@ -68,13 +69,13 @@ async function readDoc(file, o, report) {
   const pick = (found) => {
     if (!report && !found) {
       throw new Error('cannot tell which report ' + path.basename(file) + ' is. Name it with --report (' +
-        SPEC.list().map((s) => s.report).join(', ') + ').');
+        SPEC.list().map((s) => s.id).join(', ') + ').');
     }
     return SPEC.load(report || found);
   };
   if (/\.xls[xm]$/i.test(file)) {
     const book = await TEMPLATE.readWorkbook(bytes);
-    const spec = await pick(SPEC.detectSheets(book.sheets.map((s) => s.name)));
+    const spec = await pick(await TEMPLATE.detect(book));
     const header = TEMPLATE.readHeader(book, spec);
     Object.keys(flags).forEach((k) => { if (flags[k] !== undefined) header[k] = flags[k]; });
     return { spec, doc: TEMPLATE.readTemplate(book, spec, header, { branchCode: o['branch-code'] }) };
@@ -102,7 +103,7 @@ async function main() {
   const o = parseArgs(process.argv.slice(2));
   if (o.files.length !== 1) {
     console.error('Usage: node cli.js <file.xml | file.zip | template.xlsx> [--bank RB] [--offices N] [--branches file.csv] [--prior earlier.xml] [--csv out.csv] [--all]');
-    console.error('Reports: ' + SPEC.list().map((s) => s.report + ' ' + s.version).join(', '));
+    console.error('Reports (--report takes the name before the colon): ' + SPEC.list().map((s) => s.id + ': ' + s.report + ' ' + s.version).join(', '));
     process.exit(2);
   }
   const file = o.files[0];
@@ -127,7 +128,7 @@ async function main() {
   }
   const history = {};
   for (const prior of o.prior) {
-    const d = (await readDoc(prior, o, spec.report)).doc;
+    const d = (await readDoc(prior, o, spec.id)).doc;
     const key = ENGINE.historyKey(spec, d);
     if (!key) throw new Error('Cannot read the period of ' + prior);
     history[key] = d;

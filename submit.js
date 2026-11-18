@@ -234,7 +234,7 @@ async function prepare(file, o) {
   }
   let check = null;
   if (isXml && styles[info.reportCode] !== undefined) {
-    const spec = await SPEC.load(info.reportCode);
+    const spec = await SPEC.load(SPEC.detectXmlText(ENGINE.decode(new Uint8Array(data)).text) || info.reportCode);
     const r = ENGINE.check(spec, ENGINE.readXmlBytes(new Uint8Array(data), spec), { profile: readConfig().profile || { bank: {} } });
     check = { errors: r.counts.error, warnings: r.counts.warning, first: r.findings.filter((f) => f.sev === 'error').slice(0, 5).map((f) => f.code + ': ' + f.msg) };
   }
